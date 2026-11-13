@@ -3617,7 +3617,7 @@ async function sendPicks(id,btn){const e=data.entries.find(x=>x.id===id),p=picks
   btn.disabled=true;btn.textContent='Sending…';
   try{const r=await post('/api/respond',JSON.stringify({entry:id,text}),{'Content-Type':'application/json'});
     if(!r.ok){btn.disabled=false;btn.textContent=await reason(r,'Couldn’t send');buzz('bad');return}
-    delete picks[id];buzz('ok');last='';poll()}
+    delete picks[id];buzz('ok');autoAnswered();last='';poll()}
   catch(_){btn.disabled=false;btn.textContent='Couldn’t reach your Mac';buzz('bad')}}
 function qCard(e,q,i){const ch=chosenSet(q,e.answers);const tap=pickable(e),mine=(picks[e.id]||{})[i]||[];
   const opts=q.options.map((o,oi)=>{const rec=/\(Recommended\)/i.test(o.label);const lab=plain(o.label);
@@ -4016,9 +4016,14 @@ function autoNext(entries,wait,heard,now,busy){  // the reply to start now, or n
     if(!e||e.status==='failed'||ready&&!e.audio||now-(e.created||0)>AUTO_FRESH||ready&&(heard[e.audio]||0)>=.9){wait.delete(id);continue}
     if(ready&&(!pick||(e.created||0)<(pick.created||0)))pick=e}
   return busy?null:pick}
-let autoOn=false,autoKnown=null,autoBlocked=false;const autoWait=new Set();
+let autoOn=false,autoKnown=null,autoBlocked=false,autoLetGo='';const autoWait=new Set();
 try{autoOn=localStorage.getItem('replies-auto')==='1'}catch(_){}
-const autoBusy=()=>!!hold||!!wantPlay||playLoading>0||queue.length>0||!!cur&&!audio.ended&&(!audio.paused||audio.currentTime>0);
+const autoBusy=()=>!!hold||!!wantPlay||playLoading>0||queue.length>0||!!cur&&!audio.ended&&(!audio.paused||audio.currentTime>0&&cur.key!==autoLetGo);
+// Talking back pauses the reply (the mic does it); once the answer is sent that pause stops holding
+// Auto, so the chat's next reply plays. Playing that clip again puts it back under the usual rule.
+// The rest of a paused "Play all" is dropped too (Play all starts it again), or it would hold Auto.
+// With Auto off nothing changes: the paused clip and its Play all stay as they were.
+function autoAnswered(){if(autoOn&&cur&&audio.paused){autoLetGo=cur.key;queue=[]}setTimeout(autoPump)}
 function autoPump(){if(!autoOn||autoBlocked)return;const e=autoNext(data.entries,autoWait,heard,Date.now()/1000,autoBusy());if(!e)return;
   if(!clipUrl(e.audio)){fetchClip(e.audio,true).then(u=>{if(u)autoPump()});return}
   autoWait.delete(e.id);cur=null;
@@ -4030,7 +4035,7 @@ function paintAuto(){const b=$('#aut'),wait=autoOn&&autoBlocked;b.setAttribute('
 $('#aut').addEventListener('click',()=>{autoOn=!autoOn;autoBlocked=false;try{localStorage.setItem('replies-auto',autoOn?'1':'0')}catch(_){}
   if(autoOn)unlockAudio();else autoWait.clear();paintAuto();autoPump()});
 document.addEventListener('pointerdown',()=>{if(!autoBlocked)return;autoBlocked=false;paintAuto();setTimeout(autoPump,300)},true);  // after the tap's own click
-audio.addEventListener('play',()=>{if(cur)autoWait.delete(cur.key);if(autoBlocked){autoBlocked=false;paintAuto()}});
+audio.addEventListener('play',()=>{autoLetGo='';if(cur)autoWait.delete(cur.key);if(autoBlocked){autoBlocked=false;paintAuto()}});
 audio.addEventListener('ended',()=>setTimeout(autoPump,400));
 paintAuto();
 window.addEventListener('pagehide',()=>saveHeard(true,true));
@@ -4257,7 +4262,7 @@ $('#ssend').addEventListener('click',async()=>{const e=target,text=stext.value.t
   sending=true;sheetError('');fit();
   try{const r=await post(e.newChat?'/api/newchat':'/api/respond',JSON.stringify(e.newChat?{text}:e.direct?{chat:e.chat,text}:{entry:e.id,text}),{'Content-Type':'application/json'});
     if(!r.ok){sheetError(await reason(r,'Couldn’t send that.'));return}
-    delete drafts[e.id];stext.value='';if(docked()){if(conv)conv.stick=true}else closeSheet();buzz('ok');last='';poll();if(e.todo)tdChatNote(e.todo)}
+    delete drafts[e.id];stext.value='';if(docked()){if(conv)conv.stick=true}else closeSheet();buzz('ok');autoAnswered();last='';poll();if(e.todo)tdChatNote(e.todo)}
   catch(_){sheetError('Couldn’t reach your Mac. Your reply is still here.')}
   finally{sending=false;fit()}});
 document.addEventListener('click',ev=>{
