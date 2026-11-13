@@ -2682,7 +2682,7 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
   text-align:center;color:var(--ink);font-family:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   font-size:var(--ccfs);font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;transition:opacity .4s ease}
 .cct.in{animation:ccin .35s ease both}
-.cct .ccw{color:color-mix(in srgb,var(--ink) 50%,transparent);transition:color .22s ease}
+.cct .ccw{color:color-mix(in srgb,var(--ink) 50%,transparent);transition:color .12s ease-out}
 .cct .ccw.past{color:color-mix(in srgb,var(--ink) 82%,transparent)}
 .cct .ccw.on{color:var(--ink)}
 .ccpill{position:absolute;left:0;top:0;z-index:-1;border-radius:.22em;background:var(--accent-soft);opacity:0;
@@ -3877,7 +3877,7 @@ seek.addEventListener('change',()=>{if(dur())audio.currentTime=seek.value/1000*d
 // its phrase. Everything follows seeking and playback speed through currentTime.
 const ccScripts=new Map();let ccOn=false,ccChunks=null,ccFile='',ccIdx=-1,ccWi=-2,ccRaf=0;
 try{ccOn=localStorage.getItem('replies-cc')==='1'}catch(_){}
-const CC_END=/[.!?…,;:—–]["”’)]*$/,CC_LEAD=.05,CC_SIZES=[.6,.7,.8,.9,1,1.15,1.3,1.5,1.75];
+const CC_END=/[.!?…,;:—–]["”’)]*$/,CC_LEAD=.2,CC_SIZES=[.6,.7,.8,.9,1,1.15,1.3,1.5,1.75];
 function ccSplit(text){const words=text.split(/\s+/).filter(Boolean),out=[];let cur=[],len=0,first=0;
   words.forEach((w,i)=>{if(!cur.length)first=i;cur.push(w);len+=w.length+1;
     const stop=/[.!?…]["”’)]*$/.test(w),pause=!stop&&CC_END.test(w);
@@ -3957,7 +3957,9 @@ function ccLayout(){const h=document.querySelector('header');$('#cc').style.setP
 function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile===cur.file&&!audio.ended);box.hidden=!on;
   cancelAnimationFrame(ccRaf);ccRaf=0;if(!on)return;
   // until the clip's length is known, a chunk or beat timed by its share waits, unless it opens the clip
-  const d=dur(),now=ccNow()+CC_LEAD,ch=ccChunks.chunks,share=x=>d?x*d:x?Infinity:0;
+  // CC_LEAD is real seconds: the word lights a beat before it is heard, so its quick fade and the marker's
+  // glide finish as it is said rather than after. Scaled by speed, so 2x is just as far ahead to the eye.
+  const d=dur(),now=ccNow()+CC_LEAD*(audio.playbackRate||1),ch=ccChunks.chunks,share=x=>d?x*d:x?Infinity:0;
   const at=c=>c.t0!=null?c.t0:share(c.at);let i=0;while(i+1<ch.length&&at(ch[i+1])<=now)i++;
   const bs=ccChunks.beats,bt=b=>b.t!=null?b.t:share(b.f||0);let bi=-1;
   bs.forEach((b,k)=>{if(bt(b)<=now&&(bi<0||bt(b)>=bt(bs[bi])))bi=k});  // the latest beat to have started
