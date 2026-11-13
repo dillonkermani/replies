@@ -1019,6 +1019,23 @@ class AutoPlayNewReplies(unittest.TestCase):
         self.assertEqual(self.note_then_next([self.reply("a")], [self.reply("a"), self.reply("b")], on=False),
                          [None, []])
 
+    def busy(self, **state):
+        page = server.PAGE
+        start = page.index("const autoBusy=")
+        line = page[start:page.index("\n", start)]
+        s = {"hold": None, "wantPlay": None, "playLoading": 0, "queue": [], "cur": None,
+             "audio": {"ended": False, "paused": True, "currentTime": 0}, **state}
+        stubs = "".join(f"let {k}={json.dumps(v)};" for k, v in s.items())
+        return self.run_js(stubs + line + "return autoBusy()")
+
+    def test_nothing_starts_while_the_mic_is_still_opening(self):
+        self.assertFalse(self.busy())
+        self.assertTrue(self.busy(hold={"on": False}))
+        self.assertTrue(self.busy(hold={"on": True}))
+
+    def test_nothing_starts_while_a_tapped_or_queued_clip_is_still_downloading(self):
+        self.assertTrue(self.busy(playLoading=1))
+
     def test_the_page_wires_auto_to_the_feed_and_the_button(self):
         page = server.PAGE
         self.assertIn('id="aut"', page)

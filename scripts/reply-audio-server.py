@@ -3568,7 +3568,7 @@ function armAnims(){document.querySelectorAll('#tree .node,#tree .apill').forEac
 let sounding=false;  // true from the 'playing' event until it pauses, stalls or ends
 // A clip still being written or voiced can be tapped: it's queued ("wanted") and plays as soon
 // as it's ready. Only a failed clip is disabled.
-let wantPlay=null,wantTick=0,wantTry=0;
+let wantPlay=null,wantTick=0,wantTry=0,playLoading=0;
 function playBtn(key,file,label,failed){const mine=cur&&cur.key===key&&!audio.paused,on=mine&&sounding,ready=!!(file&&clipUrl(file));
   const t=file&&heard[file]>0?` title="Listened ${Math.round(pct(file))}%"`:'',pending=!ready&&!failed,wanted=pending&&!!wantPlay&&wantPlay.key===key;
   return `<button class="play ${on?'on':''} ${mine&&!sounding?'loading':''} ${pending?'warming':''} ${wanted?'wanted':''} ${pct(file)>=99?'done':''}" data-key="${esc(key)}" data-file="${esc(file||'')}" data-label="${esc(label)}" ${failed?'disabled':''} aria-label="${wanted?'Queued to play when ready':pending?'Play when ready':'Play'}"${pending?` aria-pressed="${wanted}"`:''}${t}>${lvl(file)}${on?PAUSE:PLAYC}</button>`}
@@ -3831,7 +3831,7 @@ async function poll(ms){try{const r=await fetch('/api/entries',{cache:'no-store'
 window.addEventListener('popstate',()=>{want=fromPath();view=want?'?'+want:'';agent=fromAgent();resolveWanted();
   const f=data.chats.find(c=>c.id===filter);if(f&&f.agent!==agent)filter='all';render()});
 async function play(key,file,label){if(cur&&cur.key===key){audio.paused?audio.play():audio.pause();return}
-  const url=clipUrl(file)||await fetchClip(file,true);if(!url)return;  // a queued clip may not be fetched yet
+  let url=clipUrl(file);if(!url){playLoading++;try{url=await fetchClip(file,true)}finally{playLoading--}}if(!url)return;  // a queued clip may not be fetched yet
   cur={key,label,file};sounding=false;audio.src=url;
   // A clip listened to part-way picks up a couple of seconds before where listening stopped (any
   // device: the level is shared). Finished or barely-started clips play from the top.
@@ -4016,7 +4016,7 @@ function autoNext(entries,wait,heard,now,busy){  // the reply to start now, or n
   return busy?null:pick}
 let autoOn=false,autoKnown=null,autoBlocked=false;const autoWait=new Set();
 try{autoOn=localStorage.getItem('replies-auto')==='1'}catch(_){}
-const autoBusy=()=>!!(hold&&hold.on)||!!wantPlay||queue.length>0||!!cur&&!audio.ended&&(!audio.paused||audio.currentTime>0);
+const autoBusy=()=>!!hold||!!wantPlay||playLoading>0||queue.length>0||!!cur&&!audio.ended&&(!audio.paused||audio.currentTime>0);
 function autoPump(){if(!autoOn||autoBlocked)return;const e=autoNext(data.entries,autoWait,heard,Date.now()/1000,autoBusy());if(!e)return;
   if(!clipUrl(e.audio)){fetchClip(e.audio,true).then(u=>{if(u)autoPump()});return}
   autoWait.delete(e.id);cur=null;
