@@ -1036,6 +1036,18 @@ class AutoPlayNewReplies(unittest.TestCase):
     def test_nothing_starts_while_a_tapped_or_queued_clip_is_still_downloading(self):
         self.assertTrue(self.busy(playLoading=1))
 
+    def test_play_counts_a_clip_download_until_it_finishes(self):
+        page = server.PAGE
+        fn = page[page.index("async function play("):page.index("\n", page.index("  const p=audio.play();"))]
+        stubs = ("let playLoading=0,cur=null,sounding=false,heard={},done;const audio={play(){return Promise.resolve()},"
+                 "addEventListener(){}};const el={textContent:'',classList:{remove(){}}};const $=()=>el;const dur=()=>0;"
+                 "const clipUrl=()=>'';const fetchClip=()=>new Promise(r=>{done=r});")
+        js = stubs + fn + ("\n(async()=>{const p=play('k','k.mp3','L');const during=playLoading;done('blob:x');await p;"
+                           "process.stdout.write(JSON.stringify([during,playLoading,cur&&cur.key]))})()")
+        out = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [1, 0, "k"])
+
     def test_the_page_wires_auto_to_the_feed_and_the_button(self):
         page = server.PAGE
         self.assertIn('id="aut"', page)
