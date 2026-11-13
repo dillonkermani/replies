@@ -1,0 +1,73 @@
+{
+  "name": "replies",
+  "version": "0.2.16",
+  "description": "Spoken replies for Claude Code: every longer reply becomes a short audio clip on a local web page, with question cards, a chat view, and text or voice responses typed back into the chat. Phone access over your own tailnet.",
+  "keywords": [
+    "audio",
+    "voice",
+    "tts",
+    "mobile",
+    "tailscale"
+  ],
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "title": "Rewrite model",
+      "description": "The Claude model that turns each reply into a short spoken script. It runs once per longer reply on your own Claude account.",
+      "default": "claude-sonnet-5-5"
+    },
+    "port": {
+      "type": "string",
+      "title": "Port",
+      "description": "Local port for the page. The phone listener uses the port below it.",
+      "default": "8799"
+    },
+    "phone": {
+      "type": "string",
+      "title": "Phone link",
+      "description": "on: set up a tailnet-only HTTPS link with `tailscale serve` when Tailscale is signed in. off: local page only.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "install_deps": {
+      "type": "string",
+      "title": "Install helpers",
+      "description": "off (default): /replies-setup walks you through installing helpers. on: install ffmpeg, whisper-cpp and tmux with Homebrew and fetch the Whisper model automatically in the background on first run.",
+      "default": "off",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "data_dir": {
+      "type": "string",
+      "title": "Data folder",
+      "description": "Where replies and audio are kept. Empty: the plugin's own folder. Set it to reuse an existing reply store.",
+      "default": ""
+    },
+    "require_key": {
+      "type": "string",
+      "title": "Require key",
+      "description": "on: every request needs this install's private key (links carry it as #k=). off: anything on this Mac can open the page; only for single-user Macs with tools that can't send the key.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "footer_badge": {
+      "type": "string",
+      "title": "Footer message",
+      "description": "on: print \"reply-audio latest\" after each spoken reply, for a status-line play link.",
+      "default": "off",
+      "options": [
+        "on",
+        "off"
+      ]
+    }
+  },
+  "license": "MIT"
+}

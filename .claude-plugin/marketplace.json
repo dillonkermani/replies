@@ -1,0 +1,12 @@
+{
+  "name": "replies",
+  "owner": { "name": "dillonkermani" },
+  "plugins": [
+    {
+      "name": "replies",
+      "source": "./",
+      "description": "Spoken replies for Claude Code on a local page, with phone access over your tailnet",
+      "category": "productivity"
+    }
+  ]
+}
