@@ -1049,11 +1049,33 @@ class AutoPlayNewReplies(unittest.TestCase):
         start = page.index("function autoAnswered(")
         fn = page[start:page.index("\n", start)]
         out = self.run_js("let autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
-                          "let cur={key:'r1'},audio={paused:true};" + fn + "autoAnswered();const a=autoLetGo;"
+                          "let cur={key:'r1'},audio={paused:true},queue=[];" + fn + "autoAnswered();const a=autoLetGo;"
                           "autoLetGo='';audio.paused=false;autoAnswered();return [a,autoLetGo]")
         self.assertEqual(out, ["r1", ""])
-        self.assertIn("buzz('ok');autoAnswered();", page)  # the Send button
+        self.assertIn("closeSheet();buzz('ok');autoAnswered();", page)  # the Send button
         self.assertIn("delete picks[id];buzz('ok');autoAnswered();", page)  # tapped question picks
+
+    def test_sending_an_answer_drops_the_rest_of_a_paused_play_all_but_not_a_playing_one(self):
+        page = server.PAGE
+        start = page.index("function autoAnswered(")
+        fn = page[start:page.index("\n", start)]
+        out = self.run_js("let autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
+                          "let cur={key:'q#0'},audio={paused:false},queue=[{key:'q#1'}];" + fn +
+                          "autoAnswered();const kept=queue.length;audio.paused=true;autoAnswered();"
+                          "return [kept,queue.length]")
+        self.assertEqual(out, [1, 0])
+        paused = {"cur": {"key": "q#0"}, "audio": {"ended": False, "paused": True, "currentTime": 3.1}}
+        self.assertTrue(self.busy(**paused, queue=[{"key": "q#1"}], autoLetGo="q#0"))
+        self.assertFalse(self.busy(**paused, autoLetGo="q#0"))
+
+    def test_playing_a_let_go_reply_again_puts_it_back_under_the_usual_rule(self):
+        page = server.PAGE
+        start = page.index("audio.addEventListener('play',()=>{autoLetGo=")
+        line = page[start:page.index("\n", start)]
+        out = self.run_js("let autoLetGo='r1',autoBlocked=false,cur={key:'r1'},h;const autoWait=new Set();"
+                          "const paintAuto=()=>{};const audio={addEventListener:(t,f)=>{h=f}};" + line +
+                          "h();return autoLetGo")
+        self.assertEqual(out, "")
 
     def test_play_counts_a_clip_download_until_it_finishes(self):
         page = server.PAGE
