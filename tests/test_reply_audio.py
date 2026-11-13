@@ -13,6 +13,8 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -863,6 +865,93 @@ class VisualCaptions(unittest.TestCase):
                                                                    "words": self.WORDS, "visuals": [{"t": 1}]})
             entry = next(e for e in server.entries_and_chats()["entries"] if e["id"] == rid)
         self.assertFalse({"script", "words", "visuals"} & set(entry), entry)
+
+
+NODE = shutil.which("node")
+
+
+@unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")  # CI must run these
+class CaptionWordTiming(unittest.TestCase):
+    """The page's own caption code (cut from the served page, run in node) lines each script word
+    up with the voice's timed tokens, so the highlighted word is the one being spoken."""
+
+    def run_js(self, expr):
+        page = server.PAGE
+        code = page[page.index("const CC_END="):page.index("// With the voice's word timings, each phrase")]
+        out = subprocess.run([NODE, "-e", code + "\nprocess.stdout.write(JSON.stringify(" + expr + "))"],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def align(self, script, timed):
+        return self.run_js(f"ccAlign({json.dumps(script.split())}, {json.dumps(timed)})")
+
+    def test_each_word_starts_when_the_voice_says_it(self):
+        timed = [["The", -0.01, 0.09], ["move", 0.09, 0.37], ["is", 0.37, 0.5], ["done", 0.5, 0.9],
+                 [".", 0.9, 1.0], ["It's", 1.0, 1.2], ["live", 1.2, 1.6], [",", 1.6, 1.7], ["now", 1.7, 2.0]]
+        self.assertEqual(self.align("The move is done. It's live, now", timed),
+                         [0, 0.09, 0.37, 0.5, 1.0, 1.2, 1.7])
+
+    def test_a_word_the_voice_splits_starts_at_its_first_part(self):
+        timed = [["a", 0, 0.1], ["follow", 0.1, 0.4], ["-", 0.4, 0.45], ["up", 0.45, 0.7], ["call", 0.7, 1.0]]
+        self.assertEqual(self.align("a follow-up call", timed), [0, 0.1, 0.7])
+
+    def test_a_word_spoken_differently_gets_a_time_between_its_neighbours(self):
+        timed = [["costs", 0, 0.4], ["five", 0.4, 0.8], ["dollars", 0.8, 1.2], ["today", 1.2, 1.6]]
+        self.assertEqual(self.align("costs 5 dollars today", timed), [0, 0.4, 0.8, 1.2])
+
+    def test_a_word_the_voice_skipped_does_not_derail_the_rest(self):
+        timed = [["one", 0, 0.3], ["two", 0.3, 0.6], ["three", 0.6, 0.9], ["four", 0.9, 1.2]]
+        self.assertEqual(self.align("one um two three four", timed), [0, 0.15, 0.3, 0.6, 0.9])
+
+    def test_a_token_that_only_starts_a_word_is_not_a_match(self):
+        timed = [["test", 0, 0.4], ["done", 0.4, 0.8]]
+        self.assertEqual(self.align("testing done", timed), [None, 0.4])
+
+    def test_reading_resumes_after_all_the_parts_of_a_split_word(self):
+        timed = [["follow", 0.1, 0.4], ["-", 0.4, 0.45], ["up", 0.45, 0.7], ["up", 0.7, 1.0]]
+        self.assertEqual(self.align("follow-up up", timed), [0.1, 0.7])
+
+    def test_capitals_do_not_matter(self):
+        self.assertEqual(self.align("GitHub Pages", [["github", 0, 0.5], ["pages", 0.5, 0.9]]), [0, 0.5])
+
+    def test_timing_catches_up_after_a_link_read_out_piece_by_piece(self):
+        spelled = [[c, 0.5 + i * 0.1, 0.6 + i * 0.1] for i, c in enumerate("h t t p s colon slash slash example dot com slash a b c d e f g h".split())]
+        end = spelled[-1][2]
+        timed = [["Open", 0, 0.5]] + spelled + [["to", end, end + 0.2], ["review", end + 0.2, end + 0.6], ["it", end + 0.6, end + 0.8]]
+        out = self.align("Open https://example.com/abcdefgh to review it", timed)
+        self.assertEqual(out[0], 0)
+        self.assertEqual(out[2:], [round(end, 10), round(end + 0.2, 10), round(end + 0.6, 10)])
+
+    def test_a_common_word_far_ahead_does_not_pull_the_timing_forward(self):
+        timed = [["a", 0, 0.1]] + [["x%d" % i, 0.1 * i, 0.1 * i + 0.1] for i in range(1, 30)] + [["the", 3.0, 3.1], ["zebra", 3.1, 3.5]]
+        out = self.align("a the cat", timed)
+        self.assertIsNone(out[1])
+
+    def test_resuming_after_a_pause_starts_the_clock_where_it_stopped(self):
+        page = server.PAGE
+        code = page[page.index("let ccBeat=-1,ccClk="):page.index("function ccRender(")]
+        js = ("const audio={currentTime:2.05,paused:true,playbackRate:1};" + code +
+              "ccNow();const t0=Date.now();while(Date.now()-t0<120){}"
+              "audio.paused=false;const first=ccNow();while(Date.now()-t0<240){}const later=ccNow();"
+              "process.stdout.write(JSON.stringify([first,later]))")
+        out = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        first, later = json.loads(out.stdout)
+        self.assertEqual(first, 2.05)
+        self.assertGreater(later, 2.05)
+        self.assertLessEqual(later, 2.05 + 0.25)
+
+    def test_phrases_keep_every_word_with_its_index_and_share(self):
+        script = "The move to GitHub is done, and your Mac updates from there too. Nothing else changed."
+        chunks = self.run_js(f"ccSplit({json.dumps(script)})")
+        words = script.split()
+        self.assertEqual([w for c in chunks for w in c["ws"]], words)
+        for c in chunks:
+            self.assertEqual(c["ws"], words[c["i0"]:c["i0"] + len(c["ws"])])
+            self.assertEqual(c["f"][0], 0)
+            self.assertEqual(c["f"], sorted(c["f"]))
+            self.assertLess(c["f"][-1], 1)
 
 
 if __name__ == "__main__":
