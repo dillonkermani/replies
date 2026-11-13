@@ -870,7 +870,7 @@ class VisualCaptions(unittest.TestCase):
 NODE = shutil.which("node")
 
 
-@unittest.skipUnless(NODE, "node is not installed")
+@unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")  # CI must run these
 class CaptionWordTiming(unittest.TestCase):
     """The page's own caption code (cut from the served page, run in node) lines each script word
     up with the voice's timed tokens, so the highlighted word is the one being spoken."""
@@ -903,6 +903,44 @@ class CaptionWordTiming(unittest.TestCase):
     def test_a_word_the_voice_skipped_does_not_derail_the_rest(self):
         timed = [["one", 0, 0.3], ["two", 0.3, 0.6], ["three", 0.6, 0.9], ["four", 0.9, 1.2]]
         self.assertEqual(self.align("one um two three four", timed), [0, 0.15, 0.3, 0.6, 0.9])
+
+    def test_a_token_that_only_starts_a_word_is_not_a_match(self):
+        timed = [["test", 0, 0.4], ["done", 0.4, 0.8]]
+        self.assertEqual(self.align("testing done", timed), [None, 0.4])
+
+    def test_reading_resumes_after_all_the_parts_of_a_split_word(self):
+        timed = [["follow", 0.1, 0.4], ["-", 0.4, 0.45], ["up", 0.45, 0.7], ["up", 0.7, 1.0]]
+        self.assertEqual(self.align("follow-up up", timed), [0.1, 0.7])
+
+    def test_capitals_do_not_matter(self):
+        self.assertEqual(self.align("GitHub Pages", [["github", 0, 0.5], ["pages", 0.5, 0.9]]), [0, 0.5])
+
+    def test_timing_catches_up_after_a_link_read_out_piece_by_piece(self):
+        spelled = [[c, 0.5 + i * 0.1, 0.6 + i * 0.1] for i, c in enumerate("h t t p s colon slash slash example dot com slash a b c d e f g h".split())]
+        end = spelled[-1][2]
+        timed = [["Open", 0, 0.5]] + spelled + [["to", end, end + 0.2], ["review", end + 0.2, end + 0.6], ["it", end + 0.6, end + 0.8]]
+        out = self.align("Open https://example.com/abcdefgh to review it", timed)
+        self.assertEqual(out[0], 0)
+        self.assertEqual(out[2:], [round(end, 10), round(end + 0.2, 10), round(end + 0.6, 10)])
+
+    def test_a_common_word_far_ahead_does_not_pull_the_timing_forward(self):
+        timed = [["a", 0, 0.1]] + [["x%d" % i, 0.1 * i, 0.1 * i + 0.1] for i in range(1, 30)] + [["the", 3.0, 3.1], ["zebra", 3.1, 3.5]]
+        out = self.align("a the cat", timed)
+        self.assertIsNone(out[1])
+
+    def test_resuming_after_a_pause_starts_the_clock_where_it_stopped(self):
+        page = server.PAGE
+        code = page[page.index("let ccBeat=-1,ccClk="):page.index("function ccRender(")]
+        js = ("const audio={currentTime:2.05,paused:true,playbackRate:1};" + code +
+              "ccNow();const t0=Date.now();while(Date.now()-t0<120){}"
+              "audio.paused=false;const first=ccNow();while(Date.now()-t0<240){}const later=ccNow();"
+              "process.stdout.write(JSON.stringify([first,later]))")
+        out = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        first, later = json.loads(out.stdout)
+        self.assertEqual(first, 2.05)
+        self.assertGreater(later, 2.05)
+        self.assertLessEqual(later, 2.05 + 0.25)
 
     def test_phrases_keep_every_word_with_its_index_and_share(self):
         script = "The move to GitHub is done, and your Mac updates from there too. Nothing else changed."

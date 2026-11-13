@@ -2668,15 +2668,19 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .qfold .qa b{color:var(--ink);font-weight:600;margin-right:4px}
 .qfold .qa i{font-style:normal;color:var(--amber)}
 /* Focus captions: the playing clip's words, a few at a time, in a calm serif over a soft wash.
-   Never takes taps; the header above stays usable. */
-.cc{position:fixed;inset:0;z-index:9;pointer-events:none;--ccy:52%;
+   Only the size pill takes taps; the header above stays usable. --cchead is the header's height
+   (set by the script). The caption's first line sits at --ccy: about mid-screen, low enough to leave
+   room for a visual under the header, and high enough that five lines clear the size pill. */
+.cc{position:fixed;inset:0;z-index:9;pointer-events:none;--cchead:0px;
+  --ccfs:min(calc(clamp(30px,6.4vw,58px) * var(--ccz,1)),11vw);
+  --ccy:min(calc(100% - 92px - 6.1 * var(--ccfs)),max(52%,calc(var(--cchead) + 180px)));
   background:radial-gradient(ellipse 70% 45% at 50% 52%,color-mix(in srgb,var(--bg) 92%,transparent) 0%,color-mix(in srgb,var(--bg) 70%,transparent) 55%,transparent 100%)}
 .cc[hidden]{display:none}
 /* The caption's first line sits at a fixed height (--ccy) and longer phrases grow downward, so a
    phrase change, a visual appearing or a size step never moves the line being read. */
 .cct{position:absolute;top:var(--ccy);left:0;right:0;margin:0 auto;width:min(16ch,90vw);isolation:isolate;
   text-align:center;color:var(--ink);font-family:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
-  font-size:calc(clamp(30px,6.4vw,58px) * var(--ccz,1));font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;transition:opacity .4s ease}
+  font-size:var(--ccfs);font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;transition:opacity .4s ease}
 .cct.in{animation:ccin .35s ease both}
 .cct .ccw{color:color-mix(in srgb,var(--ink) 50%,transparent);transition:color .22s ease}
 .cct .ccw.past{color:color-mix(in srgb,var(--ink) 82%,transparent)}
@@ -2695,7 +2699,8 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .cc.withv{background:radial-gradient(ellipse 90% 62% at 50% 50%,color-mix(in srgb,var(--bg) 97%,transparent) 0%,color-mix(in srgb,var(--bg) 92%,transparent) 58%,transparent 100%)}
 /* Visuals stand above the caption, bottom-aligned to it, and grow upward. */
 .ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100% - var(--ccy) + 22px);width:min(620px,92vw);
-  max-height:calc(var(--ccy) - 120px);overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
+  max-height:calc(var(--ccy) - var(--cchead) - 34px);overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
+.ccvs>.ccv{transform-origin:50% 100%}
 .ccv{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;width:100%}
 .ccv>*{animation:ccpop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * .14s)}
 @keyframes ccpop{from{opacity:0;transform:scale(.96)}}
@@ -3887,11 +3892,17 @@ function ccSplit(text){const words=text.split(/\s+/).filter(Boolean),out=[];let 
 // The voice gives punctuation its own tokens and may split a word in two, so a word matches the run
 // of tokens that spells it; one it spelled differently gets a time between its neighbours.
 const ccNorm=x=>String(x).toLowerCase().replace(/[^a-z0-9]+/g,'');
-function ccAlign(words,timed){const tn=timed.map(x=>ccNorm(x[0])),out=words.map(()=>null);let k=0;
-  words.forEach((w,i)=>{const s=ccNorm(w);if(!s)return;
-    for(let j=k;j<Math.min(tn.length,k+12);j++){if(!tn[j]||!s.startsWith(tn[j]))continue;
-      let acc='',e=j;while(e<tn.length&&acc.length<s.length){if(tn[e]){if(!s.startsWith(acc+tn[e]))break;acc+=tn[e]}e++}
-      if(acc===s){out[i]=Math.max(0,+timed[j][1]||0);k=e;break}}});
+// A match more than a few tokens ahead (after the voice read a link or path out piece by piece)
+// counts only when the next word follows it too, so a common word can't pull the timing ahead.
+function ccAlign(words,timed){const tn=timed.map(x=>ccNorm(x[0])),out=words.map(()=>null),ns=words.map(ccNorm);let k=0;
+  const spell=(s,j)=>{if(!tn[j]||!s.startsWith(tn[j]))return -1;let acc='',e=j;
+    while(e<tn.length&&acc.length<s.length){if(tn[e]){if(!s.startsWith(acc+tn[e]))break;acc+=tn[e]}e++}
+    return acc===s?e:-1};
+  const next=(i,e)=>{let n=i+1;while(n<ns.length&&!ns[n])n++;if(n>=ns.length)return true;
+    while(e<tn.length&&!tn[e])e++;return spell(ns[n],e)>=0};
+  ns.forEach((s,i)=>{if(!s)return;
+    for(let j=k;j<Math.min(tn.length,k+120);j++){const e=spell(s,j);
+      if(e>=0&&(j-k<16||next(i,e))){out[i]=Math.max(0,+timed[j][1]||0);k=e;break}}});
   for(let i=0;i<out.length;i++){if(out[i]!=null)continue;let a=i-1,b=i;while(b<out.length&&out[b]==null)b++;
     if(a>=0&&b<out.length)for(let m=i;m<b;m++)out[m]=out[a]+(out[b]-out[a])*(m-a)/(b-a);i=b}
   return out}
@@ -3907,7 +3918,7 @@ async function ccLoad(file,force){if(!force&&ccScripts.has(file))return ccScript
   const data={chunks,beats,pending:!!(w&&w.length)&&!Array.isArray(j.visuals),asked:Date.now(),tries:0};
   if(!data.pending)ccScripts.set(file,data);return data}
 function ccRefresh(){const c=ccChunks,file=ccFile;if(c.busy||c.tries>=80||Date.now()-c.asked<3000)return;c.busy=true;c.tries++;
-  ccLoad(file,true).then(n=>{c.busy=false;c.asked=Date.now();if(n&&!n.pending&&ccChunks===c&&ccFile===file){ccChunks=n;ccIdx=-1;ccBeat=-1;ccShow()}})}
+  ccLoad(file,true).then(n=>{c.busy=false;c.asked=Date.now();if(n&&!n.pending&&ccChunks===c&&ccFile===file){ccChunks=n;ccBeat=-1;ccShow()}})}
 const CC_KINDS=['chips','code','flow','compare','list','callout'];
 function ccEl(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=String(text);return e}
 const ccArr=(v,n)=>(Array.isArray(v)?v:[]).slice(0,n);
@@ -3920,10 +3931,11 @@ function ccVisual(b){const box=ccEl('div','ccv k-'+b.kind),d=b.data||{};let i=0;
   else if(b.kind==='list')ccArr(d.items,4).forEach(x=>add(ccEl('div','li',x)));
   else{if(d.value)add(ccEl('div','val',d.value));add(ccEl('div','txt',d.text||''))}
   return box}
-let ccBeat=-1,ccClk={ct:-1,pt:0};
+let ccBeat=-1,ccClk={ct:-1,pt:0,run:false};
 // currentTime moves in steps on some browsers; between steps the clock runs on from the last one
+// (from the first playing frame, so a resume after a pause doesn't jump ahead)
 function ccNow(){const ct=audio.currentTime,p=performance.now();
-  if(audio.paused||ct!==ccClk.ct){ccClk={ct,pt:p};return ct}
+  if(audio.paused||!ccClk.run||ct!==ccClk.ct){ccClk={ct,pt:p,run:!audio.paused};return ct}
   return ct+Math.min(.25,(p-ccClk.pt)/1000*(audio.playbackRate||1))}
 function ccRender(c){const t=$('#cc .cct');t.replaceChildren(ccEl('span','ccpill'));
   c.ws.forEach((x,m)=>{if(m)t.append(' ');t.append(ccEl('span','ccw',x))});
@@ -3938,6 +3950,10 @@ function ccMark(){const t=$('#cc .cct'),ws=t.querySelectorAll('.ccw'),pill=t.que
   pill.style.width=(e.offsetWidth+2*p)+'px';pill.style.height=e.offsetHeight+'px';
   pill.style.transform=`translate(${e.offsetLeft-p}px,${e.offsetTop}px)`;pill.style.opacity='1';
   if(first){void pill.offsetWidth;pill.classList.remove('jump')}}
+// A visual taller than the room under the header shrinks to fit rather than hide its top.
+function ccFit(){const vs=$('#cc .ccvs'),v=vs.firstElementChild;if(!v)return;v.style.transform='';
+  const k=Math.min(1,vs.clientHeight/(v.offsetHeight||1),vs.clientWidth/(v.offsetWidth||1));if(k<1)v.style.transform=`scale(${k})`}
+function ccLayout(){const h=document.querySelector('header');$('#cc').style.setProperty('--cchead',(h?Math.round(h.getBoundingClientRect().height):0)+'px');ccFit();if(ccWi>=0)ccMark()}
 function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile===cur.file&&!audio.ended);box.hidden=!on;
   cancelAnimationFrame(ccRaf);ccRaf=0;if(!on)return;
   // until the clip's length is known, a chunk or beat timed by its share waits, unless it opens the clip
@@ -3947,7 +3963,7 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   bs.forEach((b,k)=>{if(bt(b)<=now&&(bi<0||bt(b)>=bt(bs[bi])))bi=k});  // the latest beat to have started
   if(ccChunks.pending)ccRefresh();
   box.classList.toggle('withv',bi>=0);
-  if(bi!==ccBeat){ccBeat=bi;const vs=box.querySelector('.ccvs');vs.replaceChildren(...(bi>=0?[ccVisual(ccChunks.beats[bi])]:[]))}
+  if(bi!==ccBeat){ccBeat=bi;const vs=box.querySelector('.ccvs');vs.replaceChildren(...(bi>=0?[ccVisual(ccChunks.beats[bi])]:[]));ccFit()}
   if(i!==ccIdx){ccIdx=i;ccWi=-2;ccRender(ch[i])}
   // the word being spoken: the last one whose start has passed (its own time, or its share of the phrase)
   const c=ch[i],s0=at(c);let s1=i+1<ch.length?at(ch[i+1]):d;if(!isFinite(s1)||!(s1>s0))s1=s0+c.ws.length*.35;
@@ -3955,19 +3971,19 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   let wi=-1;for(let m=0;m<c.ws.length&&wt(m)<=now;m++)wi=m;
   if(wi!==ccWi){ccWi=wi;ccMark()}
   box.classList.toggle('paused',audio.paused);if(!audio.paused)ccRaf=requestAnimationFrame(ccShow)}
-async function ccSync(){if(ccOn&&cur&&cur.file&&ccFile!==cur.file){const file=cur.file;ccFile=file;ccIdx=-1;ccBeat=-1;ccChunks=null;
+async function ccSync(){if(ccOn)ccLayout();if(ccOn&&cur&&cur.file&&ccFile!==cur.file){const file=cur.file;ccFile=file;ccIdx=-1;ccBeat=-1;ccChunks=null;
     const ch=await ccLoad(file);if(!cur||cur.file!==file)return;ccChunks=ch}
   ccShow()}
 function ccSet(on){ccOn=on;try{localStorage.setItem('replies-cc',on?'1':'0')}catch(_){}
   const b=$('#ccb');b.setAttribute('aria-pressed',String(on));b.classList.toggle('fast',on);ccFile='';ccIdx=-1;ccBeat=-1;ccSync()}
 $('#ccb').addEventListener('click',()=>ccSet(!ccOn));
 ['play','playing','pause','seeked','ended','emptied'].forEach(n=>audio.addEventListener(n,ccSync));
-// caption size: A− and A+ beside CC step through a few sizes, kept per browser
+// caption size: A− and A+ at the foot of the captions step through a few sizes, kept per browser
 let ccZ=CC_SIZES.indexOf(1);try{const v=localStorage.getItem('replies-cc-size');if(v!==null&&CC_SIZES[+v])ccZ=+v}catch(_){}
 function ccSize(step){ccZ=Math.max(0,Math.min(CC_SIZES.length-1,ccZ+step));try{localStorage.setItem('replies-cc-size',String(ccZ))}catch(_){}
-  $('#cc').style.setProperty('--ccz',CC_SIZES[ccZ]);$('#ccm').disabled=ccZ===0;$('#ccp').disabled=ccZ===CC_SIZES.length-1;if(ccWi>=0)ccMark()}
+  $('#cc').style.setProperty('--ccz',CC_SIZES[ccZ]);$('#ccm').disabled=ccZ===0;$('#ccp').disabled=ccZ===CC_SIZES.length-1;ccFit();if(ccWi>=0)ccMark()}
 $('#ccm').addEventListener('click',()=>ccSize(-1));$('#ccp').addEventListener('click',()=>ccSize(1));
-window.addEventListener('resize',()=>{if(ccWi>=0)ccMark()});
+window.addEventListener('resize',()=>{if(ccOn)ccLayout()});
 ccSize(0);ccSet(ccOn);
 audio.addEventListener('ended',()=>{if(cur&&(heard[cur.file]||0)>=.9)markHeard(1,true);if(queue.length){const n=queue.shift();cur=null;play(n.key,n.file,n.label)}else syncButtons()});
 window.addEventListener('pagehide',()=>saveHeard(true,true));
