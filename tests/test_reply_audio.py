@@ -1048,7 +1048,7 @@ class AutoPlayNewReplies(unittest.TestCase):
         page = server.PAGE
         start = page.index("function autoAnswered(")
         fn = page[start:page.index("\n", start)]
-        out = self.run_js("let autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
+        out = self.run_js("let autoOn=true,autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
                           "let cur={key:'r1'},audio={paused:true},queue=[];" + fn + "autoAnswered();const a=autoLetGo;"
                           "autoLetGo='';audio.paused=false;autoAnswered();return [a,autoLetGo]")
         self.assertEqual(out, ["r1", ""])
@@ -1059,7 +1059,7 @@ class AutoPlayNewReplies(unittest.TestCase):
         page = server.PAGE
         start = page.index("function autoAnswered(")
         fn = page[start:page.index("\n", start)]
-        out = self.run_js("let autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
+        out = self.run_js("let autoOn=true,autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
                           "let cur={key:'q#0'},audio={paused:false},queue=[{key:'q#1'}];" + fn +
                           "autoAnswered();const kept=queue.length;audio.paused=true;autoAnswered();"
                           "return [kept,queue.length]")
@@ -1067,6 +1067,15 @@ class AutoPlayNewReplies(unittest.TestCase):
         paused = {"cur": {"key": "q#0"}, "audio": {"ended": False, "paused": True, "currentTime": 3.1}}
         self.assertTrue(self.busy(**paused, queue=[{"key": "q#1"}], autoLetGo="q#0"))
         self.assertFalse(self.busy(**paused, autoLetGo="q#0"))
+
+    def test_with_auto_off_sending_leaves_a_paused_reply_and_its_play_all_alone(self):
+        page = server.PAGE
+        start = page.index("function autoAnswered(")
+        fn = page[start:page.index("\n", start)]
+        out = self.run_js("let autoOn=false,autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
+                          "let cur={key:'q#0'},audio={paused:true},queue=[{key:'q#1'}];" + fn +
+                          "autoAnswered();return [autoLetGo,queue.length]")
+        self.assertEqual(out, ["", 1])
 
     def test_playing_a_let_go_reply_again_puts_it_back_under_the_usual_rule(self):
         page = server.PAGE

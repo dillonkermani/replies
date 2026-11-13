@@ -4022,7 +4022,8 @@ const autoBusy=()=>!!hold||!!wantPlay||playLoading>0||queue.length>0||!!cur&&!au
 // Talking back pauses the reply (the mic does it); once the answer is sent that pause stops holding
 // Auto, so the chat's next reply plays. Playing that clip again puts it back under the usual rule.
 // The rest of a paused "Play all" is dropped too (Play all starts it again), or it would hold Auto.
-function autoAnswered(){if(cur&&audio.paused){autoLetGo=cur.key;queue=[]}setTimeout(autoPump)}
+// With Auto off nothing changes: the paused clip and its Play all stay as they were.
+function autoAnswered(){if(autoOn&&cur&&audio.paused){autoLetGo=cur.key;queue=[]}setTimeout(autoPump)}
 function autoPump(){if(!autoOn||autoBlocked)return;const e=autoNext(data.entries,autoWait,heard,Date.now()/1000,autoBusy());if(!e)return;
   if(!clipUrl(e.audio)){fetchClip(e.audio,true).then(u=>{if(u)autoPump()});return}
   autoWait.delete(e.id);cur=null;
