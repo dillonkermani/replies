@@ -1,6 +1,6 @@
 {
   "name": "replies",
-  "version": "0.2.18",
+  "version": "0.2.20",
   "description": "Spoken replies for Claude Code: every longer reply becomes a short audio clip on a local web page, with question cards, a chat view, and text or voice responses typed back into the chat. Phone access over your own tailnet.",
   "keywords": [
     "audio",
