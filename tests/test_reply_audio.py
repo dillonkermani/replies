@@ -1023,7 +1023,7 @@ class AutoPlayNewReplies(unittest.TestCase):
         page = server.PAGE
         start = page.index("const autoBusy=")
         line = page[start:page.index("\n", start)]
-        s = {"hold": None, "wantPlay": None, "playLoading": 0, "queue": [], "cur": None,
+        s = {"hold": None, "wantPlay": None, "playLoading": 0, "queue": [], "cur": None, "autoLetGo": "",
              "audio": {"ended": False, "paused": True, "currentTime": 0}, **state}
         stubs = "".join(f"let {k}={json.dumps(v)};" for k, v in s.items())
         return self.run_js(stubs + line + "return autoBusy()")
@@ -1035,6 +1035,25 @@ class AutoPlayNewReplies(unittest.TestCase):
 
     def test_nothing_starts_while_a_tapped_or_queued_clip_is_still_downloading(self):
         self.assertTrue(self.busy(playLoading=1))
+
+    def test_a_reply_paused_part_way_holds_auto_until_an_answer_is_sent(self):
+        paused = {"cur": {"key": "r1"}, "audio": {"ended": False, "paused": True, "currentTime": 4.2}}
+        self.assertTrue(self.busy(**paused))
+        self.assertFalse(self.busy(**paused, autoLetGo="r1"))
+        self.assertTrue(self.busy(**paused, autoLetGo="other"))
+        playing = dict(paused, audio={"ended": False, "paused": False, "currentTime": 4.2})
+        self.assertTrue(self.busy(**playing, autoLetGo="r1"))  # still sounding: never cut off
+
+    def test_sending_an_answer_lets_go_of_the_paused_reply_only(self):
+        page = server.PAGE
+        start = page.index("function autoAnswered(")
+        fn = page[start:page.index("\n", start)]
+        out = self.run_js("let autoLetGo='';const autoPump=()=>{};const setTimeout=f=>f();"
+                          "let cur={key:'r1'},audio={paused:true};" + fn + "autoAnswered();const a=autoLetGo;"
+                          "autoLetGo='';audio.paused=false;autoAnswered();return [a,autoLetGo]")
+        self.assertEqual(out, ["r1", ""])
+        self.assertIn("buzz('ok');autoAnswered();", page)  # the Send button
+        self.assertIn("delete picks[id];buzz('ok');autoAnswered();", page)  # tapped question picks
 
     def test_play_counts_a_clip_download_until_it_finishes(self):
         page = server.PAGE
