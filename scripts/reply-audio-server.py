@@ -2611,6 +2611,18 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .pname::after{content:"·";margin-left:8px;color:var(--muted);font-weight:400}
 .player .t{flex:1;font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .player .t.idle{color:var(--muted)}
+/* Auto: a quiet dot and word at the end of the title line; filled while on, pulsing while the browser waits for a tap.
+   The hit area reaches past the text (to ~44px wide) but not down over the speed and caption buttons. */
+.auto{flex:none;align-self:center;position:relative;display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:0 2px;
+  font:inherit;font-size:11.5px;font-weight:600;color:var(--muted);cursor:pointer}
+.auto::before{content:"";width:7px;height:7px;border-radius:50%;border:1.5px solid currentColor;box-sizing:border-box}
+.auto::after{content:"";position:absolute;inset:-10px -8px -3px}
+.auto[aria-pressed="true"]{color:var(--accent)}.auto[aria-pressed="true"]::before{background:currentColor}
+.auto.blocked::before{animation:autowait 1.6s ease-in-out infinite}
+@keyframes autowait{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.auto.blocked::before{animation:none;background:none}}
+@media (hover:hover){.auto:hover{color:var(--accent)}}
+.auto:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
 .seekrow{display:flex;align-items:center;gap:8px}
 .time{flex:none;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .spd{flex:none;min-width:44px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:999px;
@@ -3356,7 +3368,7 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 <header>
   <div class="bar">
     <div class="player"><button class="play" id="pp" aria-label="Play or pause"></button>
-      <div class="pbody"><div class="ptop"><span class="pname">Replies</span><div class="t idle" id="pt">Nothing playing</div></div>
+      <div class="pbody"><div class="ptop"><span class="pname">Replies</span><div class="t idle" id="pt">Nothing playing</div><button class="auto" id="aut" title="Auto-play new replies as they arrive" aria-label="Auto-play new replies" aria-pressed="false">Auto</button></div>
       <div class="seekrow"><input type="range" id="seek" min="0" max="1000" step="1" value="0" aria-label="Seek" disabled>
       <span class="time" id="tm">0:00 / 0:00</span>
       <button class="spd" id="spd" title="Playback speed (Shift-click to go back)">1×</button>
@@ -3812,9 +3824,10 @@ function render(){renderChats();const chat=!!view;document.body.classList.toggle
 // with no body. Clearing `last` (to force a redraw) also drops the tag, so a full body comes back.
 let lastTag='';
 async function poll(ms){try{const r=await fetch('/api/entries',{cache:'no-store',headers:last&&lastTag?{'If-None-Match':lastTag}:{},signal:ms?AbortSignal.timeout(ms):undefined});
-  if(r.status===304)return true;
+  if(r.status===304){autoPump();return true}
   if(!r.ok)return false;const t=await r.text();
-  if(t!==last&&!pull){last=t;lastTag=r.headers.get('ETag')||'';data=JSON.parse(t);resolveWanted();render()}return true}catch(_){return false}}
+  if(t!==last&&!pull){last=t;lastTag=r.headers.get('ETag')||'';data=JSON.parse(t);resolveWanted();render();
+    autoKnown=autoNote(data.entries,autoKnown,autoWait,autoOn);autoPump()}return true}catch(_){return false}}
 window.addEventListener('popstate',()=>{want=fromPath();view=want?'?'+want:'';agent=fromAgent();resolveWanted();
   const f=data.chats.find(c=>c.id===filter);if(f&&f.agent!==agent)filter='all';render()});
 async function play(key,file,label){if(cur&&cur.key===key){audio.paused?audio.play():audio.pause();return}
@@ -3823,7 +3836,7 @@ async function play(key,file,label){if(cur&&cur.key===key){audio.paused?audio.pl
   // A clip listened to part-way picks up a couple of seconds before where listening stopped (any
   // device: the level is shared). Finished or barely-started clips play from the top.
   const h=heard[file]||0;if(h>.02&&h<.95)audio.addEventListener('loadedmetadata',()=>{if(cur&&cur.file===file&&dur())audio.currentTime=Math.max(0,h*dur()-2)},{once:true});
-  audio.play();$('#pt').textContent=label;$('#pt').classList.remove('idle')}
+  const p=audio.play();$('#pt').textContent=label;$('#pt').classList.remove('idle');return p}
 // Only a button whose play/pause icon flips is redrawn: rewriting all of them (hundreds on the home
 // feed) on every play, pause and stall made each press slow, and on iOS re-armed every haptic label.
 // Share: the playing clip goes to the device's own share sheet (Messages, AirDrop, Files...) as an
@@ -3986,6 +3999,38 @@ $('#ccm').addEventListener('click',()=>ccSize(-1));$('#ccp').addEventListener('c
 window.addEventListener('resize',()=>{if(ccOn)ccLayout()});
 ccSize(0);ccSet(ccOn);
 audio.addEventListener('ended',()=>{if(cur&&(heard[cur.file]||0)>=.9)markHeard(1,true);if(queue.length){const n=queue.shift();cur=null;play(n.key,n.file,n.label)}else syncButtons()});
+// Auto: a reply that first shows up after the page loaded plays by itself once its audio is ready,
+// oldest first, and only when nothing else has the speaker: not over a clip that is playing or paused
+// part-way, a "Play all" queue, a tapped clip still loading, or the mic. Replies already heard (on any
+// device) or older than AUTO_FRESH by then are dropped. On or off per browser, like the speed.
+const AUTO_FRESH=1800;
+function autoNote(entries,known,wait,on){  // known: ids seen so far; null before the first feed, which only sets it
+  const first=!known;known=known||new Set();
+  for(const e of entries){if(e.kind==='questions'||known.has(e.id))continue;known.add(e.id);if(on&&!first&&!e.legacy)wait.add(e.id)}
+  return known}
+function autoNext(entries,wait,heard,now,busy){  // the reply to start now, or null
+  let pick=null;
+  for(const id of [...wait]){const e=entries.find(x=>x.id===id),ready=!!e&&e.status==='ready';
+    if(!e||e.status==='failed'||ready&&!e.audio||now-(e.created||0)>AUTO_FRESH||ready&&(heard[e.audio]||0)>=.9){wait.delete(id);continue}
+    if(ready&&(!pick||(e.created||0)<(pick.created||0)))pick=e}
+  return busy?null:pick}
+let autoOn=false,autoKnown=null,autoBlocked=false;const autoWait=new Set();
+try{autoOn=localStorage.getItem('replies-auto')==='1'}catch(_){}
+const autoBusy=()=>!!(hold&&hold.on)||!!wantPlay||queue.length>0||!!cur&&!audio.ended&&(!audio.paused||audio.currentTime>0);
+function autoPump(){if(!autoOn||autoBlocked)return;const e=autoNext(data.entries,autoWait,heard,Date.now()/1000,autoBusy());if(!e)return;
+  if(!clipUrl(e.audio)){fetchClip(e.audio,true).then(u=>{if(u)autoPump()});return}
+  autoWait.delete(e.id);cur=null;
+  // A browser that hasn't been tapped since the page loaded refuses to start sound: the reply stays
+  // loaded in the player and waiting, and the next tap anywhere lets Auto carry on.
+  play(e.id,e.audio,e.title||'Reply').catch(err=>{if(!err||err.name!=='NotAllowedError')return;autoWait.add(e.id);autoBlocked=true;paintAuto()})}
+function paintAuto(){const b=$('#aut'),wait=autoOn&&autoBlocked;b.setAttribute('aria-pressed',String(autoOn));b.classList.toggle('blocked',wait);
+  b.title=wait?'Auto-play is waiting: tap the page once so this browser lets replies play':autoOn?'Auto-play is on: new replies play as they arrive':'Auto-play new replies as they arrive'}
+$('#aut').addEventListener('click',()=>{autoOn=!autoOn;autoBlocked=false;try{localStorage.setItem('replies-auto',autoOn?'1':'0')}catch(_){}
+  if(autoOn)unlockAudio();else autoWait.clear();paintAuto();autoPump()});
+document.addEventListener('pointerdown',()=>{if(!autoBlocked)return;autoBlocked=false;paintAuto();setTimeout(autoPump,300)},true);  // after the tap's own click
+audio.addEventListener('play',()=>{if(cur)autoWait.delete(cur.key);if(autoBlocked){autoBlocked=false;paintAuto()}});
+audio.addEventListener('ended',()=>setTimeout(autoPump,400));
+paintAuto();
 window.addEventListener('pagehide',()=>saveHeard(true,true));
 // A phone switching apps often never fires pagehide, and a tab coming back shouldn't wait for the timer.
 document.addEventListener('visibilitychange',()=>{if(document.hidden)saveHeard(true,true);else syncHeard()});

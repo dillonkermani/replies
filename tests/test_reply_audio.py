@@ -954,5 +954,76 @@ class CaptionWordTiming(unittest.TestCase):
             self.assertLess(c["f"][-1], 1)
 
 
+@unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")  # CI must run these
+class AutoPlayNewReplies(unittest.TestCase):
+    """The page's own Auto code (cut from the served page, run in node): which replies count as new,
+    and which one starts when."""
+
+    NOW = 1_000_000
+
+    def run_js(self, body):
+        page = server.PAGE
+        code = page[page.index("const AUTO_FRESH="):page.index("let autoOn=")]
+        out = subprocess.run([NODE, "-e", code + "\nprocess.stdout.write(JSON.stringify((()=>{" + body + "})()))"],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def reply(self, rid, age=10, status="ready"):
+        return {"id": rid, "kind": "reply", "status": status, "created": self.NOW - age,
+                "audio": rid + ".mp3" if status == "ready" else None}
+
+    def note_then_next(self, before, after, heard=None, busy=False, on=True):
+        return self.run_js(
+            f"const w=new Set();let k=autoNote({json.dumps(before)},null,w,{json.dumps(on)});"
+            f"k=autoNote({json.dumps(after)},k,w,{json.dumps(on)});"
+            f"const e=autoNext({json.dumps(after)},w,{json.dumps(heard or {})},{self.NOW},{json.dumps(busy)});"
+            "return [e&&e.id,[...w]]")
+
+    def test_replies_already_on_the_page_when_it_loaded_never_play(self):
+        old = [self.reply("a"), self.reply("b")]
+        self.assertEqual(self.note_then_next(old, old), [None, []])
+
+    def test_a_new_ready_reply_plays(self):
+        self.assertEqual(self.note_then_next([self.reply("a")], [self.reply("a"), self.reply("b")]), ["b", ["b"]])
+
+    def test_a_reply_still_being_voiced_waits_and_then_plays(self):
+        before = [self.reply("a")]
+        voicing = before + [self.reply("b", status="voicing")]
+        ready = before + [self.reply("b")]
+        out = self.run_js(
+            f"const w=new Set();let k=autoNote({json.dumps(before)},null,w,true);k=autoNote({json.dumps(voicing)},k,w,true);"
+            f"const first=autoNext({json.dumps(voicing)},w,{{}},{self.NOW},false);k=autoNote({json.dumps(ready)},k,w,true);"
+            f"const then=autoNext({json.dumps(ready)},w,{{}},{self.NOW},false);return [first,then&&then.id]")
+        self.assertEqual(out, [None, "b"])
+
+    def test_the_oldest_new_reply_goes_first(self):
+        after = [self.reply("n", age=5), self.reply("o", age=50), self.reply("m", age=20)]
+        self.assertEqual(self.note_then_next([self.reply("x")], [self.reply("x")] + after)[0], "o")
+
+    def test_nothing_starts_while_something_else_has_the_speaker_but_the_reply_keeps_waiting(self):
+        self.assertEqual(self.note_then_next([self.reply("a")], [self.reply("a"), self.reply("b")], busy=True),
+                         [None, ["b"]])
+
+    def test_a_reply_already_heard_elsewhere_is_dropped(self):
+        self.assertEqual(self.note_then_next([self.reply("a")], [self.reply("a"), self.reply("b")], heard={"b.mp3": 1}),
+                         [None, []])
+
+    def test_failed_stale_and_question_entries_are_dropped(self):
+        stale = self.run_js("return AUTO_FRESH") + 1
+        after = [self.reply("a"), self.reply("f", status="failed"), self.reply("s", age=stale),
+                 {"id": "q", "kind": "questions", "status": "ready", "created": self.NOW, "questions": []}]
+        self.assertEqual(self.note_then_next([self.reply("a")], after), [None, []])
+
+    def test_replies_that_arrive_while_auto_is_off_are_not_played_later(self):
+        self.assertEqual(self.note_then_next([self.reply("a")], [self.reply("a"), self.reply("b")], on=False),
+                         [None, []])
+
+    def test_the_page_wires_auto_to_the_feed_and_the_button(self):
+        page = server.PAGE
+        self.assertIn('id="aut"', page)
+        self.assertIn("autoNote(data.entries,autoKnown,autoWait,autoOn);autoPump()", page)
+
+
 if __name__ == "__main__":
     unittest.main()
