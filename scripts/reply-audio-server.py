@@ -24,7 +24,8 @@ POST /api/respond     -> queue a typed or dictated response to a reply or questi
 POST /api/respond/cancel -> drop a response that has not been delivered yet
 POST /api/respond/retry  -> send a stuck response again: requeue one that failed before anything was
                             typed, or let one held by a cmux prompt box that looked full be typed once
-POST /api/newchat     -> start a new Claude chat in tmux with {"text"} as its first message
+POST /api/newchat     -> start a new Claude chat in tmux with {"text"} as its first message, in
+                         {"folder"} (default: the folder of the most recently started open chat)
 POST /api/stt         -> local Whisper transcription of a recorded clip
 GET /api/todo?list=<id> -> {id, name, md, mtime, auto, lists} — one todo list (default master)
 GET /api/todos        -> {lists: [{id, name, done, total, auto}], max}
@@ -172,6 +173,7 @@ CSP = ("default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline
 STATIC_CSP = CSP.replace("'nonce-{nonce}'", "'none'")  # anything that isn't the page runs no script
 _title_cache = {}  # transcript path -> (mtime, title)
 _terminals = {}  # (pid, session id) -> where a live chat runs, see terminal_of
+MAX_NEW_CHAT_FOLDERS = 12  # folders offered for a new chat; any other can be typed
 _cwds = {}  # session id -> the folder it started in, see resume_cwd
 _reopening = {}  # session id -> (when, tmux session), see reopen
 _tailnet = {"at": 0, "host": "", "owner": ""}
@@ -655,16 +657,44 @@ def start_resumed(session_id, cwd):
     return name if res.returncode == 0 else ""
 
 
-def start_new_chat(text):
+def new_chat_folders(live=None, chats=()):
+    """Folders the page offers for a new chat, as [{"path", "label"}]. First is the default: the
+    folder of the most recently started open chat (home if none is open). Then the other open
+    chats' folders, the folders closed chats started in, and home."""
+    home = os.path.expanduser("~")
+    live = open_sessions() if live is None else live
+    newest = sorted(live.values(), key=lambda s: s.get("startedAt") or 0, reverse=True)
+    paths = [str(s.get("cwd") or "") for s in newest]
+    if not (paths and os.path.isdir(paths[0])):
+        paths.insert(0, home)
+    paths += [resume_cwd(c["id"]) for c in chats if not c.get("open") and c.get("agent") == "claude"]
+    out = []
+    for path in paths + [home]:
+        path = path.rstrip("/") or path
+        if path and os.path.isdir(path) and path not in [f["path"] for f in out]:
+            label = "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
+            out.append({"path": path, "label": label})
+    cut = out[:MAX_NEW_CHAT_FOLDERS]
+    if home not in [f["path"] for f in cut]:  # home is always offered, wherever it ranked
+        cut[-1:] = [f for f in out if f["path"] == home] or cut[-1:]
+    return cut
+
+
+def start_new_chat(text, folder=None):
     """(code, payload). A fresh Claude chat in a detached tmux session, with the text as its first
-    message, in the folder of the most recently started open chat (home if none is open)."""
+    message, in the given folder (any folder on this Mac; "~" is home). Without one, the default
+    from new_chat_folders."""
     text = clean_response(text)
     if not text:
         return 400, {"error": "Nothing to send."}
     if len(text) > MAX_RESPONSE_CHARS:
         return 413, {"error": f"Keep it under {MAX_RESPONSE_CHARS} characters."}
-    newest = max(open_sessions().values(), key=lambda s: s.get("startedAt") or 0, default={})
-    cwd = newest.get("cwd") if os.path.isdir(str(newest.get("cwd") or "")) else os.path.expanduser("~")
+    if folder in (None, ""):
+        cwd = new_chat_folders()[0]["path"]
+    else:
+        cwd = os.path.expanduser(folder.strip()) if isinstance(folder, str) else ""
+        if not os.path.isabs(cwd) or not os.path.isdir(cwd):
+            return 400, {"error": "That folder isn't on this Mac. Check the path."}
     env = {k: v for k, v in os.environ.items()
            if k not in SESSION_ENV and not k.startswith("CMUX_")}
     first = re.sub(r"^[\s-]+", "", text)  # a leading dash would be read as a claude flag
@@ -2215,7 +2245,7 @@ def entries_and_chats():
             else transcript_title(c["id"]) if len(c["id"]) > 8 else ""
         c["title"] = named or c["fallback"] or c["project"] or c["short"]
     ordered = sorted(chats.values(), key=lambda c: (not c["open"], -c["last"]))
-    return {"entries": out, "chats": ordered}
+    return {"entries": out, "chats": ordered, "folders": new_chat_folders(live, ordered)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2419,7 +2449,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/marks":
                 code, out = set_mark(req.get("id"), req.get("state"))
             elif path == "/api/newchat":
-                code, out = start_new_chat(req.get("text"))
+                code, out = start_new_chat(req.get("text"), req.get("folder"))
             elif path == "/api/style":
                 code, out = set_voice_style(req.get("style"))
             elif path in TODO_POSTS:
@@ -2999,6 +3029,14 @@ button,summary,.tdck{-webkit-user-select:none;user-select:none;-webkit-touch-cal
   background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;outline:none}
 #stext:focus{border-color:var(--accent)}
 .serr{margin-top:8px;font-size:13px;color:var(--bad)}
+/* New chat only: the folder it starts in, picked from the folders chats have used or typed as a path */
+.sdir{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.sdir[hidden],#spath[hidden]{display:none}
+.sdir label{font-size:12px;color:var(--muted)}
+#sfolder,#spath{flex:1 1 180px;min-width:0;min-height:44px;font:inherit;font-size:16px;color:var(--ink);background:var(--panel-2);
+  border:1px solid var(--line);border-radius:12px;padding:0 10px;outline:none}
+#spath{flex-basis:100%}
+#sfolder:focus,#spath:focus{border-color:var(--accent)}
 .sact{display:flex;align-items:center;gap:10px;margin-top:10px}
 .sact .mic{align-self:flex-end}  /* the waveform box is a little taller than the mic; keep the mic still when it shows */
 .mic{flex:none;width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);
@@ -3421,6 +3459,8 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle" hidden>
   <div class="shead"><div class="grow"><div class="slabel" id="swho"></div><div class="stitle" id="stitle"></div></div>
     <button class="x" id="sclose" aria-label="Close">×</button></div>
+  <div class="sdir" id="sdir" hidden><label for="sfolder">Folder</label><select id="sfolder"></select>
+    <input id="spath" type="text" placeholder="Folder path, like ~/code/project" aria-label="Folder path" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="1024" hidden></div>
   <textarea id="stext" rows="3" placeholder="Type a reply, or tap the mic and talk" aria-label="Your reply" maxlength="4000"></textarea>
   <div class="serr" id="serr" role="alert" hidden></div>
   <div class="sact"><div class="mbox"><canvas id="wave" aria-hidden="true" hidden></canvas><div class="mstat" id="mstat" aria-live="polite"></div></div>
@@ -4141,13 +4181,20 @@ function setMic(state,text){music.duck('rec',state==='rec');mic.innerHTML=MIC;mi
   $('#mstat').textContent=text||'';$('#wave').hidden=state!=='rec'}
 function fit(){stext.style.height='auto';stext.style.height=Math.max(docked()?44:76,stext.scrollHeight+2)+'px';
   $('#ssend').disabled=!stext.value.trim()||sending||!!hold||transcribing}
-function openSheet(e,btn){target=e;opener=btn;const c=data.chats.find(x=>x.id===e.chat),name=c?c.title:'this chat';
+const sfolder=$('#sfolder'),spath=$('#spath');let folderPick=null;  // null: the default folder; '': a typed path
+function folderFill(folders,pick){const known=pick===''||folders.some(f=>f.path===pick);
+  return {html:folders.map(f=>`<option value="${esc(f.path)}">${esc(f.label)}</option>`).join('')+'<option value="">Other folder…</option>',
+    value:pick!=null&&known?pick:folders.length?folders[0].path:''}}
+function newChatFolder(pick,typed){return pick===''?typed.trim():pick}
+function showFolders(){const f=folderFill(data.folders||[],folderPick);sfolder.innerHTML=f.html;sfolder.value=f.value;spath.hidden=f.value!==''}
+sfolder.addEventListener('change',()=>{folderPick=sfolder.value;spath.hidden=folderPick!=='';if(!spath.hidden)spath.focus()});
+function openSheet(e,btn){target=e;opener=btn;$('#sdir').hidden=!e.newChat;if(e.newChat)showFolders();const c=data.chats.find(x=>x.id===e.chat),name=c?c.title:'this chat';
   sheet.setAttribute('aria-modal','true');$('#swho').textContent=e.newChat?'Starts a new Claude Code chat':c&&c.resume?'Sending reopens '+name:'Replying in '+name;
   $('#stitle').textContent=e.title||(e.questions?e.questions.length+' decisions':'Reply');
   stext.value=drafts[e.id]||'';sheetError('');setMic('idle');$('#scrim').hidden=false;sheet.hidden=false;fit();
   if(matchMedia('(hover:hover)').matches)stext.focus()}
 function closeSheet(){holdEnd(false);recRun++;transcribing=false;micDown();
-  if(target)drafts[target.id]=stext.value;target=null;$('#scrim').hidden=true;sheet.hidden=true;sheet.classList.remove('dock');stext.rows=3;
+  if(target)drafts[target.id]=stext.value;target=null;$('#scrim').hidden=true;sheet.hidden=true;$('#sdir').hidden=true;sheet.classList.remove('dock');stext.rows=3;
   if(opener&&opener.isConnected)opener.focus();opener=null}
 function keyboard(){const v=window.visualViewport;if(!v)return;const kb=Math.max(0,Math.round(innerHeight-v.height-v.offsetTop));
   const opened=kb>0&&!sheet.classList.contains('kb');
@@ -4259,8 +4306,10 @@ function sdragEnd(ev){const d=sdrag?sdrag.d:0;sdrag=null;sheet.classList.remove(
 sheet.addEventListener('touchend',sdragEnd);sheet.addEventListener('touchcancel',sdragEnd);
 $('#sclose').addEventListener('click',closeSheet);$('#scrim').addEventListener('click',closeSheet);
 $('#ssend').addEventListener('click',async()=>{const e=target,text=stext.value.trim();if(!e||!text||sending)return;
+  const folder=e.newChat?newChatFolder(sfolder.value,spath.value):'';
+  if(e.newChat&&!folder){sheetError('Type the folder’s path, or pick one from the list.');return}
   sending=true;sheetError('');fit();
-  try{const r=await post(e.newChat?'/api/newchat':'/api/respond',JSON.stringify(e.newChat?{text}:e.direct?{chat:e.chat,text}:{entry:e.id,text}),{'Content-Type':'application/json'});
+  try{const r=await post(e.newChat?'/api/newchat':'/api/respond',JSON.stringify(e.newChat?{text,folder}:e.direct?{chat:e.chat,text}:{entry:e.id,text}),{'Content-Type':'application/json'});
     if(!r.ok){sheetError(await reason(r,'Couldn’t send that.'));return}
     delete drafts[e.id];stext.value='';if(docked()){if(conv)conv.stick=true}else closeSheet();buzz('ok');autoAnswered();last='';poll();if(e.todo)tdChatNote(e.todo)}
   catch(_){sheetError('Couldn’t reach your Mac. Your reply is still here.')}

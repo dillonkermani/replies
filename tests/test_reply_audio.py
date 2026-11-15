@@ -1104,5 +1104,174 @@ class AutoPlayNewReplies(unittest.TestCase):
         self.assertIn("autoNote(data.entries,autoKnown,autoWait,autoOn);autoPump()", page)
 
 
+class NewChatFolder(unittest.TestCase):
+    """A new chat starts in the folder picked on the page. Only tmux and the home folder are faked."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = os.path.realpath(self.tmp.name)
+        self.home = os.path.join(self.root, "home")
+        self.started = []
+        for name in ("ROOT", "SESSIONS", "PROJECTS", "home/work", "home/other", "elsewhere"):
+            os.makedirs(os.path.join(self.root, name))
+        patches = [mock.patch.object(server, n, os.path.join(self.root, n)) for n in ("ROOT", "SESSIONS", "PROJECTS")]
+        patches += [mock.patch.object(server.subprocess, "run", side_effect=self.fake_run),
+                    mock.patch.dict(os.environ, {"HOME": self.home}),
+                    mock.patch.dict(server._terminals, clear=True), mock.patch.dict(server._cwds, clear=True)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def fake_run(self, cmd, **kw):
+        if "new-session" in cmd:
+            self.started.append(cmd)
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    def open_chat(self, sid, cwd, started):
+        server.write_json(os.path.join(server.SESSIONS, sid + ".json"),
+                          {"sessionId": sid, "pid": os.getpid(), "cwd": cwd, "startedAt": started})
+
+    def started_in(self):
+        self.assertEqual(len(self.started), 1)
+        cmd = self.started[0]
+        return cmd[cmd.index("-c") + 1]
+
+    def test_the_chat_starts_in_the_picked_folder(self):
+        self.open_chat("a" * 8, os.path.join(self.home, "work"), 5)
+        picked = os.path.join(self.root, "elsewhere")
+        code, out = server.start_new_chat("hello", picked)
+        self.assertEqual((code, out["folder"]), (200, "elsewhere"))
+        self.assertEqual(self.started_in(), picked)
+
+    def test_a_typed_path_may_start_with_a_tilde(self):
+        self.assertEqual(server.start_new_chat("hello", " ~/other ")[0], 200)
+        self.assertEqual(self.started_in(), os.path.join(self.home, "other"))
+
+    def test_without_a_pick_it_is_the_newest_open_chats_folder(self):
+        self.open_chat("a" * 8, os.path.join(self.home, "other"), 5)
+        self.open_chat("b" * 8, os.path.join(self.home, "work"), 9)
+        self.assertEqual(server.start_new_chat("hello")[0], 200)
+        self.assertEqual(self.started_in(), os.path.join(self.home, "work"))
+
+    def test_without_a_pick_or_an_open_chat_it_is_home(self):
+        self.assertEqual(server.start_new_chat("hello", "")[0], 200)
+        self.assertEqual(self.started_in(), self.home)
+
+    def test_a_folder_that_is_missing_or_not_a_full_path_starts_nothing(self):
+        for bad in (os.path.join(self.root, "gone"), "work", "../elsewhere", 7, ["~"]):
+            code, out = server.start_new_chat("hello", bad)
+            self.assertEqual(code, 400, bad)
+            self.assertIn("folder", out["error"])
+        self.assertEqual(self.started, [])
+
+    def test_a_folder_that_exists_but_is_not_a_full_path_starts_nothing(self):
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.root)
+        for bad in (".", "elsewhere", "home/work"):
+            self.assertTrue(os.path.isdir(bad))
+            self.assertEqual(server.start_new_chat("hello", bad)[0], 400, bad)
+        self.assertEqual(self.started, [])
+
+    def test_the_page_sends_the_folder_and_the_route_passes_it_on(self):
+        handler = open(os.path.join(SCRIPTS, "reply-audio-server.py"), encoding="utf-8").read()
+        self.assertIn('start_new_chat(req.get("text"), req.get("folder"))', handler)
+        self.assertIn("JSON.stringify(e.newChat?{text,folder}:", server.PAGE)
+        self.assertIn("const folder=e.newChat?newChatFolder(sfolder.value,spath.value):''", server.PAGE)
+
+    def test_the_page_shows_the_folder_row_for_a_new_chat_only_and_will_not_send_without_a_folder(self):
+        page = server.PAGE
+        self.assertIn('<div class="sdir" id="sdir" hidden>', page)
+        self.assertIn("$('#sdir').hidden=!e.newChat;if(e.newChat)showFolders();", page)
+        close = page[page.index("function closeSheet("):page.index("function closeSheet(") + 400]
+        self.assertIn("$('#sdir').hidden=true", close)
+        send = page[page.index("$('#ssend').addEventListener('click'"):]
+        self.assertLess(send.index("if(e.newChat&&!folder){sheetError("), send.index("await post("))
+
+    def test_the_feed_offers_the_default_first_then_other_chats_folders_then_home(self):
+        work, other = os.path.join(self.home, "work"), os.path.join(self.home, "other")
+        elsewhere = os.path.join(self.root, "elsewhere")
+        self.open_chat("a" * 8, other, 5)
+        self.open_chat("b" * 8, work, 9)
+        self.open_chat("c" * 8, work + "/", 1)  # the same folder twice is offered once
+        closed = "11111111-2222-3333-4444-555555555555"
+        os.makedirs(os.path.join(server.PROJECTS, "proj"))
+        with open(os.path.join(server.PROJECTS, "proj", closed + ".jsonl"), "w") as fh:
+            fh.write(json.dumps({"type": "user", "cwd": elsewhere}) + "\n")
+        folders = server.new_chat_folders(chats=[{"id": closed, "open": False, "agent": "claude"}])
+        self.assertEqual(folders, [{"path": work, "label": "~/work"}, {"path": other, "label": "~/other"},
+                                   {"path": elsewhere, "label": elsewhere}, {"path": self.home, "label": "~"}])
+        self.assertEqual(server.entries_and_chats()["folders"][0], {"path": work, "label": "~/work"})
+
+    def test_a_long_list_is_cut_but_still_ends_with_home(self):
+        for i in range(server.MAX_NEW_CHAT_FOLDERS + 3):
+            path = os.path.join(self.root, "many", str(i))
+            os.makedirs(path)
+            self.open_chat("%08d" % i, path, 100 - i)
+        folders = server.new_chat_folders()
+        self.assertEqual(len(folders), server.MAX_NEW_CHAT_FOLDERS)
+        self.assertEqual(folders[0]["path"], os.path.join(self.root, "many", "0"))
+        self.assertEqual(folders[-1]["path"], self.home)
+
+    def test_home_is_still_offered_when_it_is_an_old_chats_folder_past_the_cut(self):
+        for i in range(server.MAX_NEW_CHAT_FOLDERS + 3):
+            path = os.path.join(self.root, "many", str(i))
+            os.makedirs(path)
+            self.open_chat("%08d" % i, self.home if i == server.MAX_NEW_CHAT_FOLDERS else path, 100 - i)
+        folders = server.new_chat_folders()
+        self.assertEqual(len(folders), server.MAX_NEW_CHAT_FOLDERS)
+        self.assertEqual(folders[-1], {"path": self.home, "label": "~"})
+        self.assertEqual(len({f["path"] for f in folders}), len(folders))
+
+    def test_a_list_exactly_at_the_cap_is_left_whole(self):
+        for i in range(server.MAX_NEW_CHAT_FOLDERS - 1):
+            path = os.path.join(self.root, "many", str(i))
+            os.makedirs(path)
+            self.open_chat("%08d" % i, path, 100 - i)
+        paths = [f["path"] for f in server.new_chat_folders()]
+        self.assertEqual(paths, [os.path.join(self.root, "many", str(i))
+                                 for i in range(server.MAX_NEW_CHAT_FOLDERS - 1)] + [self.home])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class NewChatFolderPicker(unittest.TestCase):
+    """The page's own folder list code (cut from the served page, run in node)."""
+
+    FOLDERS = [{"path": "/a/work", "label": "~/work"}, {"path": "/a/<b>", "label": "~/<b>"}]
+
+    def run_js(self, body):
+        page = server.PAGE
+        esc = page.index("const esc=")
+        code = page[esc:page.index("\n", esc)] + "\n" \
+            + page[page.index("function folderFill("):page.index("function showFolders(")]
+        out = subprocess.run([NODE, "-e", code + "\nprocess.stdout.write(JSON.stringify((()=>{" + body + "})()))"],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def fill(self, pick):
+        return self.run_js(f"return folderFill({json.dumps(self.FOLDERS)},{json.dumps(pick)})")
+
+    def test_the_default_folder_is_selected_until_another_is_picked(self):
+        self.assertEqual(self.fill(None)["value"], "/a/work")
+        self.assertEqual(self.fill("/a/<b>")["value"], "/a/<b>")
+
+    def test_a_pick_that_is_no_longer_offered_falls_back_to_the_default(self):
+        self.assertEqual(self.fill("/a/gone")["value"], "/a/work")
+
+    def test_other_folder_stays_picked_and_is_always_offered(self):
+        f = self.fill("")
+        self.assertEqual(f["value"], "")
+        self.assertTrue(f["html"].endswith('<option value="">Other folder…</option>'))
+
+    def test_folder_names_are_escaped(self):
+        self.assertIn('<option value="/a/&lt;b&gt;">~/&lt;b&gt;</option>', self.fill(None)["html"])
+
+    def test_a_typed_path_is_sent_only_for_other_folder(self):
+        self.assertEqual(
+            self.run_js("return [newChatFolder('/a/work',' /typed '),newChatFolder('',' ~/x '),newChatFolder('','  ')]"),
+            ["/a/work", "~/x", ""])
+
+
 if __name__ == "__main__":
     unittest.main()
