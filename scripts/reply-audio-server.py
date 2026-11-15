@@ -674,9 +674,10 @@ def new_chat_folders(live=None, chats=()):
         if path and os.path.isdir(path) and path not in [f["path"] for f in out]:
             label = "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
             out.append({"path": path, "label": label})
-    if len(out) > MAX_NEW_CHAT_FOLDERS:  # home is last, and always offered
-        out = out[:MAX_NEW_CHAT_FOLDERS - 1] + out[-1:]
-    return out
+    cut = out[:MAX_NEW_CHAT_FOLDERS]
+    if home not in [f["path"] for f in cut]:  # home is always offered, wherever it ranked
+        cut[-1:] = [f for f in out if f["path"] == home] or cut[-1:]
+    return cut
 
 
 def start_new_chat(text, folder=None):

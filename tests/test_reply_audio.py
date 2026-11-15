@@ -1165,11 +1165,28 @@ class NewChatFolder(unittest.TestCase):
             self.assertIn("folder", out["error"])
         self.assertEqual(self.started, [])
 
+    def test_a_folder_that_exists_but_is_not_a_full_path_starts_nothing(self):
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.root)
+        for bad in (".", "elsewhere", "home/work"):
+            self.assertTrue(os.path.isdir(bad))
+            self.assertEqual(server.start_new_chat("hello", bad)[0], 400, bad)
+        self.assertEqual(self.started, [])
+
     def test_the_page_sends_the_folder_and_the_route_passes_it_on(self):
         handler = open(os.path.join(SCRIPTS, "reply-audio-server.py"), encoding="utf-8").read()
         self.assertIn('start_new_chat(req.get("text"), req.get("folder"))', handler)
         self.assertIn("JSON.stringify(e.newChat?{text,folder}:", server.PAGE)
         self.assertIn("const folder=e.newChat?newChatFolder(sfolder.value,spath.value):''", server.PAGE)
+
+    def test_the_page_shows_the_folder_row_for_a_new_chat_only_and_will_not_send_without_a_folder(self):
+        page = server.PAGE
+        self.assertIn('<div class="sdir" id="sdir" hidden>', page)
+        self.assertIn("$('#sdir').hidden=!e.newChat;if(e.newChat)showFolders();", page)
+        close = page[page.index("function closeSheet("):page.index("function closeSheet(") + 400]
+        self.assertIn("$('#sdir').hidden=true", close)
+        send = page[page.index("$('#ssend').addEventListener('click'"):]
+        self.assertLess(send.index("if(e.newChat&&!folder){sheetError("), send.index("await post("))
 
     def test_the_feed_offers_the_default_first_then_other_chats_folders_then_home(self):
         work, other = os.path.join(self.home, "work"), os.path.join(self.home, "other")
@@ -1195,6 +1212,25 @@ class NewChatFolder(unittest.TestCase):
         self.assertEqual(len(folders), server.MAX_NEW_CHAT_FOLDERS)
         self.assertEqual(folders[0]["path"], os.path.join(self.root, "many", "0"))
         self.assertEqual(folders[-1]["path"], self.home)
+
+    def test_home_is_still_offered_when_it_is_an_old_chats_folder_past_the_cut(self):
+        for i in range(server.MAX_NEW_CHAT_FOLDERS + 3):
+            path = os.path.join(self.root, "many", str(i))
+            os.makedirs(path)
+            self.open_chat("%08d" % i, self.home if i == server.MAX_NEW_CHAT_FOLDERS else path, 100 - i)
+        folders = server.new_chat_folders()
+        self.assertEqual(len(folders), server.MAX_NEW_CHAT_FOLDERS)
+        self.assertEqual(folders[-1], {"path": self.home, "label": "~"})
+        self.assertEqual(len({f["path"] for f in folders}), len(folders))
+
+    def test_a_list_exactly_at_the_cap_is_left_whole(self):
+        for i in range(server.MAX_NEW_CHAT_FOLDERS - 1):
+            path = os.path.join(self.root, "many", str(i))
+            os.makedirs(path)
+            self.open_chat("%08d" % i, path, 100 - i)
+        paths = [f["path"] for f in server.new_chat_folders()]
+        self.assertEqual(paths, [os.path.join(self.root, "many", str(i))
+                                 for i in range(server.MAX_NEW_CHAT_FOLDERS - 1)] + [self.home])
 
 
 @unittest.skipUnless(NODE, "node is not installed")
