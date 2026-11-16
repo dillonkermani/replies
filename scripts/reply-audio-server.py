@@ -26,6 +26,9 @@ POST /api/respond/retry  -> send a stuck response again: requeue one that failed
                             typed, or let one held by a cmux prompt box that looked full be typed once
 POST /api/newchat     -> start a new Claude chat in tmux with {"text"} as its first message, in
                          {"folder"} (default: the folder of the most recently started open chat)
+POST /api/fs          -> the folders inside {"path"} (default: that same folder), for the new
+                         chat's folder browser: {path, parent, home, entries, more}; {"hidden"}
+                         true includes dot folders
 POST /api/stt         -> local Whisper transcription of a recorded clip
 GET /api/todo?list=<id> -> {id, name, md, mtime, auto, lists} — one todo list (default master)
 GET /api/todos        -> {lists: [{id, name, done, total, auto}], max}
@@ -173,7 +176,8 @@ CSP = ("default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline
 STATIC_CSP = CSP.replace("'nonce-{nonce}'", "'none'")  # anything that isn't the page runs no script
 _title_cache = {}  # transcript path -> (mtime, title)
 _terminals = {}  # (pid, session id) -> where a live chat runs, see terminal_of
-MAX_NEW_CHAT_FOLDERS = 12  # folders offered for a new chat; any other can be typed
+MAX_NEW_CHAT_FOLDERS = 12  # recent folders offered for a new chat; any other can be browsed to
+MAX_FS_ENTRIES = 500  # folders listed at one level of the folder browser
 _cwds = {}  # session id -> the folder it started in, see resume_cwd
 _reopening = {}  # session id -> (when, tmux session), see reopen
 _tailnet = {"at": 0, "host": "", "owner": ""}
@@ -680,6 +684,46 @@ def new_chat_folders(live=None, chats=()):
     return cut
 
 
+def default_chat_folder():
+    """Where a new chat starts when no folder is picked: new_chat_folders' first, else home."""
+    folders = new_chat_folders()
+    return folders[0]["path"] if folders else os.path.expanduser("~")
+
+
+def list_folders(path=None, hidden=False):
+    """(code, payload). The folders inside a folder, for the new chat's folder browser: any folder
+    on this Mac, by full path ("~" is home). Without a path, the default new-chat folder. Names
+    only, folders only (a link to a folder counts), dot folders only when asked."""
+    if path in (None, ""):
+        target = default_chat_folder()
+    else:
+        target = os.path.expanduser(path.strip()) if isinstance(path, str) else ""
+        if not os.path.isabs(target):
+            return 400, {"error": "That folder isn't on this Mac. Check the path."}
+    target = "/" + os.path.normpath(target).lstrip("/")
+    names = []
+    try:
+        with os.scandir(target) as found:
+            for entry in found:
+                if entry.name.startswith(".") and not hidden:
+                    continue
+                try:
+                    if entry.is_dir():
+                        names.append(entry.name)
+                except OSError:
+                    continue  # a broken link, or a folder we may not look at
+    except (FileNotFoundError, NotADirectoryError, ValueError):
+        return 404, {"error": "That folder isn't on this Mac."}
+    except PermissionError:
+        return 403, {"error": "This Mac won't let replies open that folder."}
+    except OSError:
+        return 500, {"error": "Couldn't open that folder."}
+    names.sort(key=lambda n: (n.lower(), n))
+    return 200, {"path": target, "parent": None if target == "/" else os.path.dirname(target),
+                 "home": os.path.expanduser("~"), "entries": names[:MAX_FS_ENTRIES],
+                 "more": len(names) > MAX_FS_ENTRIES}
+
+
 def start_new_chat(text, folder=None):
     """(code, payload). A fresh Claude chat in a detached tmux session, with the text as its first
     message, in the given folder (any folder on this Mac; "~" is home). Without one, the default
@@ -690,7 +734,7 @@ def start_new_chat(text, folder=None):
     if len(text) > MAX_RESPONSE_CHARS:
         return 413, {"error": f"Keep it under {MAX_RESPONSE_CHARS} characters."}
     if folder in (None, ""):
-        cwd = new_chat_folders()[0]["path"]
+        cwd = default_chat_folder()
     else:
         cwd = os.path.expanduser(folder.strip()) if isinstance(folder, str) else ""
         if not os.path.isabs(cwd) or not os.path.isdir(cwd):
@@ -2431,7 +2475,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stt":
             code, out = self._stt(body)
         elif path in ("/api/respond", "/api/respond/cancel", "/api/respond/retry", "/api/heard", "/api/marks",
-                      "/api/newchat", "/api/style") \
+                      "/api/newchat", "/api/fs", "/api/style") \
                 or path in TODO_POSTS:
             try:
                 req = json.loads(body)
@@ -2450,6 +2494,8 @@ class Handler(BaseHTTPRequestHandler):
                 code, out = set_mark(req.get("id"), req.get("state"))
             elif path == "/api/newchat":
                 code, out = start_new_chat(req.get("text"), req.get("folder"))
+            elif path == "/api/fs":
+                code, out = list_folders(req.get("path"), req.get("hidden") is True)
             elif path == "/api/style":
                 code, out = set_voice_style(req.get("style"))
             elif path in TODO_POSTS:
@@ -3029,14 +3075,34 @@ button,summary,.tdck{-webkit-user-select:none;user-select:none;-webkit-touch-cal
   background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;outline:none}
 #stext:focus{border-color:var(--accent)}
 .serr{margin-top:8px;font-size:13px;color:var(--bad)}
-/* New chat only: the folder it starts in, picked from the folders chats have used or typed as a path */
-.sdir{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
-.sdir[hidden],#spath[hidden]{display:none}
-.sdir label{font-size:12px;color:var(--muted)}
-#sfolder,#spath{flex:1 1 180px;min-width:0;min-height:44px;font:inherit;font-size:16px;color:var(--ink);background:var(--panel-2);
-  border:1px solid var(--line);border-radius:12px;padding:0 10px;outline:none}
-#spath{flex-basis:100%}
-#sfolder:focus,#spath:focus{border-color:var(--accent)}
+/* New chat only: a folder browser for where it starts. Home, up, the path as crumbs, the folders
+   inside, and a list of folders chats have used. The folder shown is the one the chat starts in. */
+.sdir{margin-bottom:8px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2);overflow:hidden}
+.sdir[hidden]{display:none}
+.fsnav,.fsfoot{display:flex;align-items:center;gap:6px;padding:6px}
+.fsnav{border-bottom:1px solid var(--line)}
+.fsfoot{border-top:1px solid var(--line)}
+.fsb{flex:none;width:36px;height:36px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font:inherit;font-size:16px;line-height:1;cursor:pointer}
+.fsb:disabled{opacity:.4;cursor:default}
+.fscrumbs{flex:1;min-width:0;display:flex;align-items:center;overflow-x:auto;white-space:nowrap;scrollbar-width:none;font-size:13.5px}
+.fscrumbs::-webkit-scrollbar{display:none}
+.fscrumbs .sep{flex:none;color:var(--muted)}
+.crumb{flex:none;min-height:36px;padding:0 5px;border:0;border-radius:7px;background:none;color:var(--muted);font:inherit;cursor:pointer}
+.crumb[aria-current]{color:var(--ink);font-weight:600}
+.fslist{max-height:clamp(84px,26vh,220px);overflow-y:auto;overscroll-behavior:contain}
+.sheet.kb .fslist{max-height:84px}
+.fsitem{display:block;width:100%;min-height:36px;padding:0 12px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--ink);
+  font:inherit;font-size:14.5px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.fsitem:last-child{border-bottom:0}
+.fsitem::before{content:"";display:inline-block;width:13px;height:10px;margin-right:9px;border-radius:2px;background:var(--accent);opacity:.75;vertical-align:-1px}
+.fsitem::after{content:"›";float:right;color:var(--muted)}
+.fsnote{padding:12px;font-size:13px;color:var(--muted)}
+.fsnote.bad{color:var(--bad)}
+#sfolder{flex:1;min-width:0;height:36px;font:inherit;font-size:16px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:0 8px;outline:none}
+.fshid{flex:none;display:flex;align-items:center;gap:5px;min-height:36px;font-size:12.5px;color:var(--muted);cursor:pointer}
+@media (hover:hover){.crumb:hover,.fsitem:hover{background:var(--panel);color:var(--ink)}}
+.fsb:focus-visible,.crumb:focus-visible,.fsitem:focus-visible,#sfolder:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+@media (hover:none){.fsb{width:44px;height:44px}.crumb,.fsitem,.fshid{min-height:44px}#sfolder{height:44px}}
 .sact{display:flex;align-items:center;gap:10px;margin-top:10px}
 .sact .mic{align-self:flex-end}  /* the waveform box is a little taller than the mic; keep the mic still when it shows */
 .mic{flex:none;width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);
@@ -3459,8 +3525,13 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle" hidden>
   <div class="shead"><div class="grow"><div class="slabel" id="swho"></div><div class="stitle" id="stitle"></div></div>
     <button class="x" id="sclose" aria-label="Close">×</button></div>
-  <div class="sdir" id="sdir" hidden><label for="sfolder">Folder</label><select id="sfolder"></select>
-    <input id="spath" type="text" placeholder="Folder path, like ~/code/project" aria-label="Folder path" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="1024" hidden></div>
+  <div class="sdir" id="sdir" hidden>
+    <div class="fsnav"><button type="button" class="fsb" id="fshome" title="Home folder" aria-label="Home folder" disabled>⌂</button>
+      <button type="button" class="fsb" id="fsup" title="Up one folder" aria-label="Up one folder" disabled>↑</button>
+      <nav class="fscrumbs" id="fscrumbs" aria-label="Folder the chat starts in"></nav></div>
+    <div class="fslist" id="fslist" role="group" aria-label="Folders inside"></div>
+    <div class="fsfoot"><select id="sfolder" aria-label="Jump to a recent folder"></select>
+      <label class="fshid"><input type="checkbox" id="fshidden"> Hidden</label></div></div>
   <textarea id="stext" rows="3" placeholder="Type a reply, or tap the mic and talk" aria-label="Your reply" maxlength="4000"></textarea>
   <div class="serr" id="serr" role="alert" hidden></div>
   <div class="sact"><div class="mbox"><canvas id="wave" aria-hidden="true" hidden></canvas><div class="mstat" id="mstat" aria-live="polite"></div></div>
@@ -4181,13 +4252,33 @@ function setMic(state,text){music.duck('rec',state==='rec');mic.innerHTML=MIC;mi
   $('#mstat').textContent=text||'';$('#wave').hidden=state!=='rec'}
 function fit(){stext.style.height='auto';stext.style.height=Math.max(docked()?44:76,stext.scrollHeight+2)+'px';
   $('#ssend').disabled=!stext.value.trim()||sending||!!hold||transcribing}
-const sfolder=$('#sfolder'),spath=$('#spath');let folderPick=null;  // null: the default folder; '': a typed path
-function folderFill(folders,pick){const known=pick===''||folders.some(f=>f.path===pick);
-  return {html:folders.map(f=>`<option value="${esc(f.path)}">${esc(f.label)}</option>`).join('')+'<option value="">Other folder…</option>',
-    value:pick!=null&&known?pick:folders.length?folders[0].path:''}}
-function newChatFolder(pick,typed){return pick===''?typed.trim():pick}
-function showFolders(){const f=folderFill(data.folders||[],folderPick);sfolder.innerHTML=f.html;sfolder.value=f.value;spath.hidden=f.value!==''}
-sfolder.addEventListener('change',()=>{folderPick=sfolder.value;spath.hidden=folderPick!=='';if(!spath.hidden)spath.focus()});
+// The new chat's folder browser. fsPath is the folder shown, which is the one the chat starts in;
+// null until the first listing arrives, and the server then picks its default.
+const sfolder=$('#sfolder');let fsPath=null,fsParent=null,fsHome=null,fsHidden=false,fsRun=0;
+function folderFill(folders,path){return {value:folders.some(f=>f.path===path)?path:'',
+  html:'<option value="">Recent folders</option>'+folders.map(f=>`<option value="${esc(f.path)}">${esc(f.label)}</option>`).join('')}}
+function fsJoin(path,name){return (path==='/'?'':path)+'/'+name}
+function fsCrumbs(path){let at='';return [{label:'/',path:'/'}].concat(path.split('/').filter(Boolean).map(p=>({label:p,path:at+='/'+p})))}
+function fsCrumbHtml(path){const cs=fsCrumbs(path);
+  return cs.map((c,i)=>(i>1?'<span class="sep">/</span>':'')+`<button type="button" class="crumb" data-fs="${esc(c.path)}"${i===cs.length-1?' aria-current="true"':''}>${esc(c.label)}</button>`).join('')}
+function fsListHtml(l){if(!l.entries.length)return '<div class="fsnote">No folders inside. The chat can still start here.</div>';
+  return l.entries.map(n=>`<button type="button" class="fsitem" data-fs="${esc(fsJoin(l.path,n))}">${esc(n)}</button>`).join('')
+    +(l.more?'<div class="fsnote">More folders than fit here.</div>':'')}
+function fsNote(m){$('#fslist').innerHTML='<div class="fsnote bad">'+esc(m)+'</div>'}
+function fsShow(l){fsPath=l.path;fsParent=l.parent;fsHome=l.home;$('#fshome').disabled=!fsHome;$('#fsup').disabled=!fsParent;
+  const cr=$('#fscrumbs');cr.innerHTML=fsCrumbHtml(l.path);cr.scrollLeft=cr.scrollWidth;
+  const list=$('#fslist');list.innerHTML=fsListHtml(l);list.scrollTop=0;sfolder.value=folderFill(data.folders||[],fsPath).value}
+async function fsGo(path){const run=++fsRun;
+  try{const r=await post('/api/fs',JSON.stringify({path:path||'',hidden:fsHidden}),{'Content-Type':'application/json'});
+    if(run!==fsRun)return;
+    if(!r.ok){fsNote(await reason(r,'Couldn’t open that folder.'));return}
+    const l=await r.json();if(run===fsRun)fsShow(l)}
+  catch(_){if(run===fsRun)fsNote('Couldn’t reach your Mac.')}}
+function showFolders(){sfolder.innerHTML=folderFill(data.folders||[],fsPath).html;fsGo(fsPath)}
+sfolder.addEventListener('change',()=>{if(sfolder.value)fsGo(sfolder.value)});
+$('#fshidden').addEventListener('change',ev=>{fsHidden=ev.target.checked;fsGo(fsPath)});
+$('#fshome').addEventListener('click',()=>{if(fsHome)fsGo(fsHome)});$('#fsup').addEventListener('click',()=>{if(fsParent)fsGo(fsParent)});
+$('#sdir').addEventListener('click',ev=>{const b=ev.target.closest('[data-fs]');if(b)fsGo(b.dataset.fs)});
 function openSheet(e,btn){target=e;opener=btn;$('#sdir').hidden=!e.newChat;if(e.newChat)showFolders();const c=data.chats.find(x=>x.id===e.chat),name=c?c.title:'this chat';
   sheet.setAttribute('aria-modal','true');$('#swho').textContent=e.newChat?'Starts a new Claude Code chat':c&&c.resume?'Sending reopens '+name:'Replying in '+name;
   $('#stitle').textContent=e.title||(e.questions?e.questions.length+' decisions':'Reply');
@@ -4306,8 +4397,7 @@ function sdragEnd(ev){const d=sdrag?sdrag.d:0;sdrag=null;sheet.classList.remove(
 sheet.addEventListener('touchend',sdragEnd);sheet.addEventListener('touchcancel',sdragEnd);
 $('#sclose').addEventListener('click',closeSheet);$('#scrim').addEventListener('click',closeSheet);
 $('#ssend').addEventListener('click',async()=>{const e=target,text=stext.value.trim();if(!e||!text||sending)return;
-  const folder=e.newChat?newChatFolder(sfolder.value,spath.value):'';
-  if(e.newChat&&!folder){sheetError('Type the folder’s path, or pick one from the list.');return}
+  const folder=e.newChat?fsPath||'':'';  // none yet: the server starts it in its default folder
   sending=true;sheetError('');fit();
   try{const r=await post(e.newChat?'/api/newchat':'/api/respond',JSON.stringify(e.newChat?{text,folder}:e.direct?{chat:e.chat,text}:{entry:e.id,text}),{'Content-Type':'application/json'});
     if(!r.ok){sheetError(await reason(r,'Couldn’t send that.'));return}
