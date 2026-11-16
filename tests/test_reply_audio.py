@@ -1177,16 +1177,14 @@ class NewChatFolder(unittest.TestCase):
         handler = open(os.path.join(SCRIPTS, "reply-audio-server.py"), encoding="utf-8").read()
         self.assertIn('start_new_chat(req.get("text"), req.get("folder"))', handler)
         self.assertIn("JSON.stringify(e.newChat?{text,folder}:", server.PAGE)
-        self.assertIn("const folder=e.newChat?newChatFolder(sfolder.value,spath.value):''", server.PAGE)
+        self.assertIn("const folder=e.newChat?fsPath||'':''", server.PAGE)
 
-    def test_the_page_shows_the_folder_row_for_a_new_chat_only_and_will_not_send_without_a_folder(self):
+    def test_the_page_shows_the_folder_row_for_a_new_chat_only(self):
         page = server.PAGE
         self.assertIn('<div class="sdir" id="sdir" hidden>', page)
         self.assertIn("$('#sdir').hidden=!e.newChat;if(e.newChat)showFolders();", page)
         close = page[page.index("function closeSheet("):page.index("function closeSheet(") + 400]
         self.assertIn("$('#sdir').hidden=true", close)
-        send = page[page.index("$('#ssend').addEventListener('click'"):]
-        self.assertLess(send.index("if(e.newChat&&!folder){sheetError("), send.index("await post("))
 
     def test_the_feed_offers_the_default_first_then_other_chats_folders_then_home(self):
         work, other = os.path.join(self.home, "work"), os.path.join(self.home, "other")
@@ -1233,9 +1231,97 @@ class NewChatFolder(unittest.TestCase):
                                  for i in range(server.MAX_NEW_CHAT_FOLDERS - 1)] + [self.home])
 
 
+class NewChatFolderBrowser(unittest.TestCase):
+    """The folder browser's listing: the folders inside any folder on the machine. Nothing is faked
+    but the home folder."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = os.path.realpath(self.tmp.name)
+        self.home = os.path.join(self.root, "home")
+        for name in ("SESSIONS", "PROJECTS", "home/beta", "home/Alpha", "home/.secret", "home/gamma/inner", "outside"):
+            os.makedirs(os.path.join(self.root, name))
+        with open(os.path.join(self.home, "notes.txt"), "w") as fh:
+            fh.write("a file, never listed")
+        os.symlink(os.path.join(self.root, "outside"), os.path.join(self.home, "link"))
+        os.symlink(os.path.join(self.root, "gone"), os.path.join(self.home, "broken"))
+        patches = [mock.patch.object(server, n, os.path.join(self.root, n)) for n in ("SESSIONS", "PROJECTS")]
+        patches += [mock.patch.dict(os.environ, {"HOME": self.home}), mock.patch.dict(server._cwds, clear=True)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_it_lists_the_folders_inside_by_name_and_leaves_out_files_and_dot_folders(self):
+        code, out = server.list_folders(self.home)
+        self.assertEqual(code, 200)
+        self.assertEqual(out["entries"], ["Alpha", "beta", "gamma", "link"])
+        self.assertEqual((out["path"], out["parent"], out["home"], out["more"]),
+                         (self.home, self.root, self.home, False))
+
+    def test_dot_folders_show_when_asked_for(self):
+        self.assertEqual(server.list_folders(self.home, hidden=True)[1]["entries"],
+                         [".secret", "Alpha", "beta", "gamma", "link"])
+
+    def test_any_folder_on_the_machine_can_be_opened_up_to_the_top(self):
+        out = server.list_folders(os.path.join(self.root, "outside"))[1]
+        self.assertEqual((out["path"], out["entries"]), (os.path.join(self.root, "outside"), []))
+        code, top = server.list_folders("/")
+        self.assertEqual((code, top["path"], top["parent"]), (200, "/", None))
+        self.assertIn(self.root.split("/")[1], top["entries"])
+
+    def test_a_tilde_and_a_roundabout_path_come_back_as_the_plain_path(self):
+        for asked in ("~/gamma", " ~/gamma/ ", os.path.join(self.home, "beta", "..", "gamma"), "/" + self.home + "/gamma"):
+            code, out = server.list_folders(asked)
+            self.assertEqual((code, out["path"], out["entries"]), (200, os.path.join(self.home, "gamma"), ["inner"]), asked)
+
+    def test_without_a_path_it_opens_where_a_new_chat_would_start(self):
+        self.assertEqual(server.list_folders()[1]["path"], self.home)
+        server.write_json(os.path.join(server.SESSIONS, "a.json"),
+                          {"sessionId": "a" * 8, "pid": os.getpid(), "cwd": os.path.join(self.home, "gamma"), "startedAt": 1})
+        self.assertEqual(server.list_folders("")[1]["path"], os.path.join(self.home, "gamma"))
+
+    def test_a_missing_folder_a_file_or_a_path_that_is_not_full_is_refused(self):
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.root)  # so the relative ones do exist
+        for bad, code in ((os.path.join(self.root, "gone"), 404), (os.path.join(self.home, "notes.txt"), 404),
+                          (self.home + "/\0", 404), ("home", 400), (".", 400), (7, 400), (["~"], 400), ({}, 400)):
+            got, out = server.list_folders(bad)
+            self.assertEqual(got, code, bad)
+            self.assertIn("folder", out["error"])
+
+    def test_a_folder_the_mac_will_not_open_says_so(self):
+        locked = os.path.join(self.home, "beta")
+        os.chmod(locked, 0)
+        self.addCleanup(os.chmod, locked, 0o700)
+        if os.access(locked, os.R_OK):
+            self.skipTest("running as a user no folder is closed to")
+        self.assertEqual(server.list_folders(locked)[0], 403)
+
+    def test_a_very_full_folder_is_cut_and_says_there_are_more(self):
+        with mock.patch.object(server, "MAX_FS_ENTRIES", 3):
+            out = server.list_folders(self.home)[1]
+        self.assertEqual((out["entries"], out["more"]), (["Alpha", "beta", "gamma"], True))
+
+    def test_a_new_chat_with_no_folder_and_no_home_reports_it_cleanly(self):
+        with mock.patch.dict(os.environ, {"HOME": os.path.join(self.root, "nowhere")}), \
+                mock.patch.object(server.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="", stderr="")):
+            self.assertEqual(server.new_chat_folders(), [])
+            self.assertEqual(server.start_new_chat("hello")[0], 500)
+
+    def test_the_page_asks_through_a_route_that_takes_posts_only(self):
+        handler = open(os.path.join(SCRIPTS, "reply-audio-server.py"), encoding="utf-8").read()
+        posts = handler[handler.index('elif path in ("/api/respond"'):handler.index("or path in TODO_POSTS")]
+        self.assertIn('"/api/fs"', posts)
+        self.assertIn('list_folders(req.get("path"), req.get("hidden") is True)', handler)
+        gets = handler[handler.index("def do_GET("):handler.index("def do_POST(")]
+        self.assertNotIn("/api/fs", gets)
+        self.assertIn("post('/api/fs',JSON.stringify({path:path||'',hidden:fsHidden})", server.PAGE)
+
+
 @unittest.skipUnless(NODE, "node is not installed")
 class NewChatFolderPicker(unittest.TestCase):
-    """The page's own folder list code (cut from the served page, run in node)."""
+    """The page's own folder browser code (cut from the served page, run in node)."""
 
     FOLDERS = [{"path": "/a/work", "label": "~/work"}, {"path": "/a/<b>", "label": "~/<b>"}]
 
@@ -1243,34 +1329,42 @@ class NewChatFolderPicker(unittest.TestCase):
         page = server.PAGE
         esc = page.index("const esc=")
         code = page[esc:page.index("\n", esc)] + "\n" \
-            + page[page.index("function folderFill("):page.index("function showFolders(")]
+            + page[page.index("function folderFill("):page.index("function fsNote(")]
         out = subprocess.run([NODE, "-e", code + "\nprocess.stdout.write(JSON.stringify((()=>{" + body + "})()))"],
                              capture_output=True, text=True, timeout=30)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)
 
-    def fill(self, pick):
-        return self.run_js(f"return folderFill({json.dumps(self.FOLDERS)},{json.dumps(pick)})")
+    def test_the_recent_list_shows_the_open_folder_when_it_is_one_of_them(self):
+        fill = lambda path: self.run_js(f"return folderFill({json.dumps(self.FOLDERS)},{json.dumps(path)})")
+        self.assertEqual(fill("/a/work")["value"], "/a/work")
+        self.assertEqual(fill("/a/work/deeper")["value"], "")
+        self.assertEqual(fill(None)["value"], "")
+        self.assertTrue(fill(None)["html"].startswith('<option value="">Recent folders</option>'))
 
-    def test_the_default_folder_is_selected_until_another_is_picked(self):
-        self.assertEqual(self.fill(None)["value"], "/a/work")
-        self.assertEqual(self.fill("/a/<b>")["value"], "/a/<b>")
+    def test_recent_folder_names_are_escaped(self):
+        html = self.run_js(f"return folderFill({json.dumps(self.FOLDERS)},null).html")
+        self.assertIn('<option value="/a/&lt;b&gt;">~/&lt;b&gt;</option>', html)
 
-    def test_a_pick_that_is_no_longer_offered_falls_back_to_the_default(self):
-        self.assertEqual(self.fill("/a/gone")["value"], "/a/work")
+    def test_each_part_of_the_path_is_a_crumb_that_opens_that_folder(self):
+        self.assertEqual(self.run_js("return [fsCrumbs('/'),fsCrumbs('/Users/me/code')]"),
+                         [[{"label": "/", "path": "/"}],
+                          [{"label": "/", "path": "/"}, {"label": "Users", "path": "/Users"},
+                           {"label": "me", "path": "/Users/me"}, {"label": "code", "path": "/Users/me/code"}]])
+        html = self.run_js("return fsCrumbHtml('/a/<b>')")
+        self.assertEqual(html, '<button type="button" class="crumb" data-fs="/">/</button>'
+                               '<button type="button" class="crumb" data-fs="/a">a</button><span class="sep">/</span>'
+                               '<button type="button" class="crumb" data-fs="/a/&lt;b&gt;" aria-current="true">&lt;b&gt;</button>')
 
-    def test_other_folder_stays_picked_and_is_always_offered(self):
-        f = self.fill("")
-        self.assertEqual(f["value"], "")
-        self.assertTrue(f["html"].endswith('<option value="">Other folder…</option>'))
+    def test_a_folder_in_the_list_opens_the_path_below_the_one_shown(self):
+        self.assertEqual(self.run_js("return [fsJoin('/','Users'),fsJoin('/a','b c')]"), ["/Users", "/a/b c"])
+        html = self.run_js("return fsListHtml({path:'/a',entries:['x','\"q\"&<i>'],more:false})")
+        self.assertEqual(html, '<button type="button" class="fsitem" data-fs="/a/x">x</button>'
+                               '<button type="button" class="fsitem" data-fs="/a/&quot;q&quot;&amp;&lt;i&gt;">&quot;q&quot;&amp;&lt;i&gt;</button>')
 
-    def test_folder_names_are_escaped(self):
-        self.assertIn('<option value="/a/&lt;b&gt;">~/&lt;b&gt;</option>', self.fill(None)["html"])
-
-    def test_a_typed_path_is_sent_only_for_other_folder(self):
-        self.assertEqual(
-            self.run_js("return [newChatFolder('/a/work',' /typed '),newChatFolder('',' ~/x '),newChatFolder('','  ')]"),
-            ["/a/work", "~/x", ""])
+    def test_an_empty_folder_and_a_cut_list_say_so(self):
+        self.assertIn("No folders inside", self.run_js("return fsListHtml({path:'/a',entries:[],more:false})"))
+        self.assertIn("More folders than fit", self.run_js("return fsListHtml({path:'/a',entries:['x'],more:true})"))
 
 
 if __name__ == "__main__":
