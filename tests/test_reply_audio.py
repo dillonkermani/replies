@@ -736,6 +736,28 @@ class VoiceStyle(unittest.TestCase):
         self.assertNotIn("Two smaller items", out)  # the model's count no longer holds after the cut
         self.assertNotIn("Item 59", out)  # ranked most important first, so the end of the body goes
 
+    def test_the_cap_holds_for_scripts_that_cant_be_cut_by_sentence(self):
+        cap = hook.STYLES["standard"]["cap"]
+        long_opening = "Here is everything: " + "item, " * 300 + "done. Next one. Should I merge?"
+        two_sentences = "word " * 300 + "end. Should I merge?"
+        no_punctuation = "\n".join(["a list line with no stop at all"] * 60)
+        for script in (long_opening, two_sentences, no_punctuation):
+            self.assertLessEqual(len(hook.fit_script(script, cap).split()), cap)
+
+    def test_an_abbreviation_does_not_end_a_sentence_when_cutting(self):
+        script = ("The deploy is done. It covers small tools, e.g. the linter and the formatter. "
+                  + " ".join(f"Item {i} has a few more words to say here." for i in range(60)) + " Should I merge?")
+        self.assertEqual(hook.sentences("It covers small tools, e.g. the linter. Then more. Done?"),
+                         ["It covers small tools, e.g. the linter.", "Then more.", "Done?"])
+        out = hook.fit_script(script, hook.STYLES["standard"]["cap"])
+        self.assertIn("e.g. the linter and the formatter.", out)
+
+    def test_the_models_own_leftover_count_goes_wherever_it_sits(self):
+        script = ("The deploy is done. Two smaller items are in the written reply. "
+                  + " ".join(f"Item {i} has a few more words to say here." for i in range(60)) + " Should I merge?")
+        out = hook.fit_script(script, hook.STYLES["standard"]["cap"])
+        self.assertEqual(out.count("written reply"), 1)
+
     def test_a_script_within_the_cap_is_left_alone(self):
         short = "The deploy is done. Nothing needs you. Two smaller items are in the written reply."
         self.assertEqual(hook.fit_script(short, hook.STYLES["standard"]["cap"]), short)

@@ -285,25 +285,44 @@ def ask_claude(system_prompt, user_input):
 
 
 LEFT_FOR_TEXT = "The rest is in the written reply."
+ABBREVIATIONS = ("e.g.", "i.e.", "etc.", "vs.", "Mr.", "Mrs.", "Ms.", "Dr.", "St.")
+
+
+def sentences(text):
+    """Sentences of a script, without splitting after an abbreviation like "e.g."."""
+    out = []
+    for piece in re.split(r"(?<=[.!?])\s+", text.strip()):
+        if out and out[-1].endswith(ABBREVIATIONS):
+            out[-1] += " " + piece
+        elif piece:
+            out.append(piece)
+    return out
 
 
 def fit_script(text, cap):
     """A script over `cap` words, cut back by whole sentences from the end of its body: the opening
     outcome and a closing question always stay, and the cut is named as left for the text. The
-    script is ranked most important first, so the end of the body is what matters least."""
-    sents = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
-    if len(text.split()) <= cap or len(sents) < 3:
+    script is ranked most important first, so the end of the body is what matters least. A script
+    that can't be cut that way (too few sentences, or an opening too long to keep) is cut at the
+    cap like any clip, so the cap always holds."""
+    if len(text.split()) <= cap:
         return text
-    head, body = sents[0], sents[1:]
-    ask = [body.pop()] if body[-1].rstrip("\"')”’").endswith("?") else []
-    if body and "written reply" in body[-1]:  # the model's own count would be wrong after the cut
-        body.pop()
     count = lambda ss: sum(len(s.split()) for s in ss)
-    budget = cap - count([head, LEFT_FOR_TEXT] + ask)
-    while body and count(body) > budget:
-        body.pop()
-    log(f"script over {cap} words: cut to {count([head, *body, LEFT_FOR_TEXT, *ask])}")
-    return " ".join([head, *body, LEFT_FOR_TEXT, *ask])
+    sents = sentences(text)
+    out = None
+    if len(sents) >= 3:
+        head, body = sents[0], sents[1:]
+        ask = [body.pop()] if body[-1].rstrip("\"')”’").endswith("?") else []
+        body = [s for s in body if "written reply" not in s]  # the model's own count is wrong after the cut
+        budget = cap - count([head, LEFT_FOR_TEXT] + ask)
+        while body and count(body) > budget:
+            body.pop()
+        if budget > 0:
+            out = " ".join([head, *body, LEFT_FOR_TEXT, *ask])
+    if out is None:
+        out = cap_words(text, cap)
+    log(f"script over {cap} words: cut to {len(out.split())}")
+    return out
 
 
 def cap_words(text, cap=CLIP_CAP):
