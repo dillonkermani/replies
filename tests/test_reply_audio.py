@@ -834,6 +834,8 @@ class VisualCaptions(unittest.TestCase):
 
     def test_a_timed_voice_timeout_is_not_tried_again(self):
         with mock.patch.object(hook, "voicemode_tts", return_value=self.URL), \
+                mock.patch.object(hook, "_kokoro_dead", False), \
+                mock.patch.object(hook.subprocess, "run", return_value=mock.Mock(returncode=0)), \
                 mock.patch.object(hook._NO_PROXY, "open", side_effect=TimeoutError("slow")) as opened, \
                 mock.patch.object(hook, "render") as plain:
             self.assertIsNone(hook.render_timed("hi", "/tmp/x.mp3"))
