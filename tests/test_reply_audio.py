@@ -966,6 +966,15 @@ class CaptionWordTiming(unittest.TestCase):
         self.assertIn("ccRender(ch[i],ccPrev(ch,i))", page)
         self.assertIn(".ccl.prev{transform:translateY(", page)
 
+    def test_the_previous_phrase_is_a_caption_option_and_a_tap_outside_closes_captions(self):
+        page = server.PAGE
+        pill = page[page.index('<div class="ccsize"'):page.index("</div>", page.index('<div class="ccsize"'))]
+        self.assertIn('id="ccl"', pill)
+        self.assertIn("localStorage.getItem('replies-cc-prev')", page)
+        self.assertIn("$('#cc').addEventListener('click',e=>{if(!e.target.closest('.ccsize'))ccSet(false)})", page)
+        cc_rule = page[page.index(".cc{position:fixed"):page.index("}", page.index(".cc{position:fixed"))]
+        self.assertNotIn("pointer-events:none", cc_rule)
+
 
 @unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")  # CI must run these
 class AutoPlayNewReplies(unittest.TestCase):
