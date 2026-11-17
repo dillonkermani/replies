@@ -2760,7 +2760,7 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
    (set by the script). The caption's first line sits at --ccy: about mid-screen, low enough to leave
    room for a visual under the header, and high enough that five lines clear the size pill. */
 .cc{position:fixed;inset:0;z-index:9;pointer-events:none;--cchead:0px;
-  --ccfs:min(calc(clamp(30px,6.4vw,58px) * var(--ccz,1)),11vw);
+  --ccfs:min(calc(clamp(30px,6.4vw,58px) * var(--ccz,1)),11vw);--ccpr:calc(var(--ccfs) * 1.6);
   --ccy:min(calc(100% - 92px - 6.1 * var(--ccfs)),max(52%,calc(var(--cchead) + 180px)));
   background:radial-gradient(ellipse 70% 45% at 50% 52%,color-mix(in srgb,var(--bg) 92%,transparent) 0%,color-mix(in srgb,var(--bg) 70%,transparent) 55%,transparent 100%)}
 .cc[hidden]{display:none}
@@ -2773,6 +2773,14 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .cct .ccw{color:color-mix(in srgb,var(--ink) 50%,transparent);transition:color .12s ease-out}
 .cct .ccw.past{color:color-mix(in srgb,var(--ink) 82%,transparent)}
 .cct .ccw.on{color:var(--ink)}
+/* The phrase just spoken stays above the current one, small and faint, so a missed word is a glance
+   up rather than a rewind. It grows upward from the current line (two lines at most), so it never
+   moves that line; visuals sit above the band it may fill (--ccpr), so they never jump either. */
+.ccprev{position:absolute;bottom:calc(100% - var(--ccy) + .4em);left:0;right:0;margin:0 auto;width:min(29ch,90vw);
+  text-align:center;color:color-mix(in srgb,var(--ink) 38%,transparent);font-family:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  font-size:calc(var(--ccfs) * .55);font-weight:400;line-height:1.22;text-wrap:balance;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.ccprev.in{animation:ccin .35s ease both}
 .ccpill{position:absolute;left:0;top:0;z-index:-1;border-radius:.22em;background:var(--accent-soft);opacity:0;
   transition:transform .18s cubic-bezier(.3,.7,.3,1),width .18s cubic-bezier(.3,.7,.3,1),height .18s ease,opacity .2s ease}
 .ccpill.jump{transition:opacity .2s ease}
@@ -2786,8 +2794,8 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .cc.paused .cct{opacity:.5}.cc.paused .ccvs{opacity:.85}
 .cc.withv{background:radial-gradient(ellipse 90% 62% at 50% 50%,color-mix(in srgb,var(--bg) 97%,transparent) 0%,color-mix(in srgb,var(--bg) 92%,transparent) 58%,transparent 100%)}
 /* Visuals stand above the caption, bottom-aligned to it, and grow upward. */
-.ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100% - var(--ccy) + 22px);width:min(620px,92vw);
-  max-height:calc(var(--ccy) - var(--cchead) - 34px);overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
+.ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100% - var(--ccy) + 22px + var(--ccpr));width:min(620px,92vw);
+  max-height:calc(var(--ccy) - var(--cchead) - 34px - var(--ccpr));overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
 .ccvs>.ccv{transform-origin:50% 100%}
 .ccv{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;width:100%}
 .ccv>*{animation:ccpop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * .14s)}
@@ -2812,7 +2820,7 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .ccv .txt{font-size:clamp(15px,3.4vw,20px);color:var(--muted)}
 @media (prefers-reduced-motion:reduce){.ccv>*{animation:none}}
 @keyframes ccin{from{opacity:.3}}
-@media (prefers-reduced-motion:reduce){.cct.in{animation:none}.cct,.ccpill{transition:none}}
+@media (prefers-reduced-motion:reduce){.cct.in,.ccprev.in{animation:none}.cct,.ccpill{transition:none}}
 .mpanel .mlab{margin-top:12px;font-size:12px;font-weight:650;color:var(--muted)}
 .mtracks.vstyle{grid-template-columns:repeat(3,1fr);margin-top:6px}
 .pgh{font-size:11px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:8px 8px 2px}
@@ -3520,7 +3528,7 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 </header>
 <div id="ptr"><div class="ptrp" id="ptrp" role="status"><span class="pspin"></span><span id="ptrt"></span></div></div>
 <main><div id="todo"></div><div id="tree"><div class="empty">Loading…</div></div></main>
-<div class="cc" id="cc" hidden><div class="ccvs" aria-hidden="true"></div><div class="cct" aria-hidden="true"></div><div class="ccsize" role="group" aria-label="Caption size"><button id="ccm" title="Smaller captions" aria-label="Smaller captions">A−</button><button id="ccp" title="Larger captions" aria-label="Larger captions">A+</button></div></div>
+<div class="cc" id="cc" hidden><div class="ccvs" aria-hidden="true"></div><div class="ccprev" aria-hidden="true"></div><div class="cct" aria-hidden="true"></div><div class="ccsize" role="group" aria-label="Caption size"><button id="ccm" title="Smaller captions" aria-label="Smaller captions">A−</button><button id="ccp" title="Larger captions" aria-label="Larger captions">A+</button></div></div>
 <div class="scrim" id="scrim" hidden></div>
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle" hidden>
   <div class="shead"><div class="grow"><div class="slabel" id="swho"></div><div class="stitle" id="stitle"></div></div>
@@ -4012,6 +4020,8 @@ function ccSplit(text){const words=text.split(/\s+/).filter(Boolean),out=[];let 
   const total=out.reduce((a,c)=>a+c.w,0)||1;let acc=0;out.forEach(c=>{c.at=acc/total;acc+=c.w;
     const n=c.ws.reduce((a,x)=>a+x.length+1,0)||1;let k=0;c.f=c.ws.map(x=>{const f=k/n;k+=x.length+1;return f})});  // each word's share of its phrase
   return out}
+// The phrase shown faintly above the current one: the one just spoken, or none at the clip's start.
+const ccPrev=(ch,i)=>i>0&&ch[i-1]?ch[i-1].t:'';
 // Each script word's start in seconds from the voice's timed tokens ([word, start, end]), or null.
 // The voice gives punctuation its own tokens and may split a word in two, so a word matches the run
 // of tokens that spells it; one it spelled differently gets a time between its neighbours.
@@ -4061,9 +4071,10 @@ let ccBeat=-1,ccClk={ct:-1,pt:0,run:false};
 function ccNow(){const ct=audio.currentTime,p=performance.now();
   if(audio.paused||!ccClk.run||ct!==ccClk.ct){ccClk={ct,pt:p,run:!audio.paused};return ct}
   return ct+Math.min(.25,(p-ccClk.pt)/1000*(audio.playbackRate||1))}
-function ccRender(c){const t=$('#cc .cct');t.replaceChildren(ccEl('span','ccpill'));
+function ccRender(c,prev){const t=$('#cc .cct'),p=$('#cc .ccprev');t.replaceChildren(ccEl('span','ccpill'));
   c.ws.forEach((x,m)=>{if(m)t.append(' ');t.append(ccEl('span','ccw',x))});
-  t.classList.remove('in');void t.offsetWidth;t.classList.add('in')}
+  p.textContent=prev||'';
+  [t,p].forEach(e=>{e.classList.remove('in');void e.offsetWidth;e.classList.add('in')})}
 // Lights the spoken word: words before it are read, words after it still to come; a soft marker
 // glides from word to word. Only colour and the marker change, so the line itself never moves.
 function ccMark(){const t=$('#cc .cct'),ws=t.querySelectorAll('.ccw'),pill=t.querySelector('.ccpill');
@@ -4090,7 +4101,7 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   if(ccChunks.pending)ccRefresh();
   box.classList.toggle('withv',bi>=0);
   if(bi!==ccBeat){ccBeat=bi;const vs=box.querySelector('.ccvs');vs.replaceChildren(...(bi>=0?[ccVisual(ccChunks.beats[bi])]:[]));ccFit()}
-  if(i!==ccIdx){ccIdx=i;ccWi=-2;ccRender(ch[i])}
+  if(i!==ccIdx){ccIdx=i;ccWi=-2;ccRender(ch[i],ccPrev(ch,i))}
   // the word being spoken: the last one whose start has passed (its own time, or its share of the phrase)
   const c=ch[i],s0=at(c);let s1=i+1<ch.length?at(ch[i+1]):d;if(!isFinite(s1)||!(s1>s0))s1=s0+c.ws.length*.35;
   const wt=m=>c.ts&&c.ts[m]!=null?c.ts[m]:s0+(s1-s0)*c.f[m];

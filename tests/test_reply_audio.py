@@ -953,6 +953,18 @@ class CaptionWordTiming(unittest.TestCase):
             self.assertEqual(c["f"], sorted(c["f"]))
             self.assertLess(c["f"][-1], 1)
 
+    def test_the_phrase_above_is_the_one_just_spoken(self):
+        script = "The move to GitHub is done, and your Mac updates from there too. Nothing else changed."
+        texts = self.run_js(f"ccSplit({json.dumps(script)}).map(c=>c.t)")
+        prev = self.run_js(f"(()=>{{const ch=ccSplit({json.dumps(script)});return ch.map((_,i)=>ccPrev(ch,i))}})()")
+        self.assertGreater(len(texts), 2)
+        self.assertEqual(prev, [""] + texts[:-1])
+
+    def test_the_page_draws_the_previous_phrase_above_the_caption(self):
+        page = server.PAGE
+        self.assertLess(page.index('<div class="ccprev"'), page.index('<div class="cct"'))
+        self.assertIn("ccRender(ch[i],ccPrev(ch,i))", page)
+
 
 @unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")  # CI must run these
 class AutoPlayNewReplies(unittest.TestCase):
