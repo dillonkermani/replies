@@ -724,15 +724,75 @@ class VoiceStyle(unittest.TestCase):
         self.assertEqual(len(set(prompts.values())), 3)
         self.assertNotIn("@@LENGTH@@", "".join(prompts.values()))
 
+    LONG = ("The deploy is done. " + " ".join(f"Item {i} has a few more words to say here." for i in range(60))
+            + " Two smaller items are in the written reply. Should I merge it now?")
+
+    def test_an_over_long_script_keeps_its_outcome_and_question_and_names_the_cut(self):
+        cap = hook.STYLES["standard"]["cap"]
+        out = hook.fit_script(self.LONG, cap)
+        self.assertLessEqual(len(out.split()), cap)
+        self.assertTrue(out.startswith("The deploy is done. Item 0 "))
+        self.assertTrue(out.endswith(hook.LEFT_FOR_TEXT + " Should I merge it now?"))
+        self.assertNotIn("Two smaller items", out)  # the model's count no longer holds after the cut
+        self.assertNotIn("Item 59", out)  # ranked most important first, so the end of the body goes
+
+    def test_the_cap_holds_for_scripts_that_cant_be_cut_by_sentence(self):
+        cap = hook.STYLES["standard"]["cap"]
+        long_opening = "Here is everything: " + "item, " * 300 + "done. Next one. Should I merge?"
+        two_sentences = "word " * 300 + "end. Should I merge?"
+        no_punctuation = "\n".join(["a list line with no stop at all"] * 60)
+        for script in (long_opening, two_sentences, no_punctuation):
+            self.assertLessEqual(len(hook.fit_script(script, cap).split()), cap)
+
+    def test_an_abbreviation_does_not_end_a_sentence_when_cutting(self):
+        script = ("The deploy is done. It covers small tools, e.g. the linter and the formatter. "
+                  + " ".join(f"Item {i} has a few more words to say here." for i in range(60)) + " Should I merge?")
+        self.assertEqual(hook.sentences("It covers small tools, e.g. the linter. Then more. Done?"),
+                         ["It covers small tools, e.g. the linter.", "Then more.", "Done?"])
+        out = hook.fit_script(script, hook.STYLES["standard"]["cap"])
+        self.assertIn("e.g. the linter and the formatter.", out)
+
+    def test_the_models_own_leftover_count_goes_wherever_it_sits(self):
+        script = ("The deploy is done. Two smaller items are in the written reply. "
+                  + " ".join(f"Item {i} has a few more words to say here." for i in range(60)) + " Should I merge?")
+        out = hook.fit_script(script, hook.STYLES["standard"]["cap"])
+        self.assertEqual(out.count("written reply"), 1)
+
+    def test_a_script_within_the_cap_is_left_alone(self):
+        short = "The deploy is done. Nothing needs you. Two smaller items are in the written reply."
+        self.assertEqual(hook.fit_script(short, hook.STYLES["standard"]["cap"]), short)
+
+    def test_only_standard_scripts_are_cut_to_the_cap(self):
+        out = os.path.join(self.tmp.name, "r")
+        rid = "20990101-000000-abcdef"
+        for style, cut in (("standard", True), ("relaxed", False), ("brief", False)):
+            server.set_voice_style(style)
+            with open(os.path.join(out, rid + ".txt"), "w") as fh:
+                fh.write("written reply " * 80)
+            hook.write_json(os.path.join(out, rid + ".json"),
+                            {"id": rid, "kind": "reply", "status": "rendering", "audio": rid + ".mp3"})
+            claude = lambda prompt, text: "[]" if prompt == hook.VISUALS_PROMPT else "Deploy Status\n\n" + self.LONG
+            with mock.patch.object(hook, "OUT_DIR", out), \
+                    mock.patch.object(hook, "ask_claude", side_effect=claude), \
+                    mock.patch.object(hook._NO_PROXY, "open", side_effect=OSError("no network in tests")), \
+                    mock.patch.object(hook, "render"):
+                hook.render_reply(rid)
+            script = json.load(open(os.path.join(out, rid + ".json")))["script"]
+            self.assertEqual(len(script.split()) <= hook.STYLES["standard"]["cap"], cut, style)
+
     def test_brief_asks_for_a_short_script(self):
         # Brief asked for "40 to 100 words" and came out at 172-185: the model reads a range as room.
         # It now states one hard ceiling, no longer than the shortest Standard script.
         brief = hook.STYLES["brief"]["length"]
+        # Standard reads a range as room the same way (asked 130 to 170, wrote ~200), so it states a
+        # ceiling too; Brief's stays below it.
         ceiling = re.findall(r"at most (\d+) words", brief)
-        standard = re.search(r"(\d+) to \d+ words", hook.STYLES["standard"]["length"])
+        standard = re.findall(r"at most (\d+) words", hook.STYLES["standard"]["length"])
         self.assertEqual(len(ceiling), 1, brief)
-        self.assertNotRegex(brief, r"\d+ to \d+ words")
-        self.assertLessEqual(int(ceiling[0]), int(standard.group(1)))
+        self.assertEqual(len(standard), 1)
+        for text in (brief, hook.STYLES["standard"]["length"]):
+            self.assertNotRegex(text, r"\d+ to \d+ words")
+        self.assertLess(int(ceiling[0]), int(standard[0]))
         self.assertIn(brief, hook.rewrite_prompt("brief"))
 
     def test_relaxed_and_brief_are_voiced_slower_and_quicker(self):
