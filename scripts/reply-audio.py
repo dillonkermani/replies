@@ -33,6 +33,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -506,23 +507,38 @@ def render_timed(text, out_path, speed=1.0):
                    "stream": False, "return_timestamps": True}
         if speed != 1.0:
             payload["speed"] = speed
-        try:
-            req = urllib.request.Request(url[:-len("/v1/audio/speech")] + "/dev/captioned_speech",
-                                         data=json.dumps(payload).encode(),
-                                         headers={"Content-Type": "application/json"})
-            with _NO_PROXY.open(req, timeout=600) as resp:
-                body = json.load(resp)
-            audio = base64.b64decode(body.get("audio") or "")
-            if audio:
-                with open(out_path + ".part", "wb") as fh:
-                    fh.write(audio)
-                os.replace(out_path + ".part", out_path)
-                return [[str(w["word"]), round(float(w["start_time"]), 2), round(float(w["end_time"]), 2)]
-                        for w in body.get("timestamps") or []] or None
-        except Exception as exc:
-            log(f"timed voice failed ({type(exc).__name__}); plain voice instead")
+        for retried in (False, True):
+            try:
+                req = urllib.request.Request(url[:-len("/v1/audio/speech")] + "/dev/captioned_speech",
+                                             data=json.dumps(payload).encode(),
+                                             headers={"Content-Type": "application/json"})
+                with _NO_PROXY.open(req, timeout=600) as resp:
+                    body = json.load(resp)
+                audio = base64.b64decode(body.get("audio") or "")
+                if audio:
+                    with open(out_path + ".part", "wb") as fh:
+                        fh.write(audio)
+                    os.replace(out_path + ".part", out_path)
+                    return [[str(w["word"]), round(float(w["start_time"]), 2), round(float(w["end_time"]), 2)]
+                            for w in body.get("timestamps") or []] or None
+                break
+            except Exception as exc:
+                # Kokoro dropping the connection (it crashed or is restarting) gets one more try once
+                # it is back: without one, the reply keeps no word timings and its captions drift.
+                if not retried and _dropped(exc) and revive_kokoro(url):
+                    log(f"timed voice dropped ({type(exc).__name__}); kokoro is back, trying again")
+                    continue
+                log(f"timed voice failed ({type(exc).__name__}); plain voice instead")
+                break
     render(text, out_path, speed)
     return None
+
+
+def _dropped(exc):
+    """A connection that was cut or refused, as when the voice server crashes or restarts; not a
+    timeout or a bad answer, which a second try would only repeat."""
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    return isinstance(reason, ConnectionError)
 
 
 def prune():

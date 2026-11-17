@@ -797,6 +797,55 @@ class VisualCaptions(unittest.TestCase):
             self.assertIsNone(hook.render_timed("hi", "/tmp/x.mp3", 0.85))
         plain.assert_called_once_with("hi", "/tmp/x.mp3", 0.85)
 
+    URL = ("http://127.0.0.1:8880/v1/audio/speech", "af_sky")
+
+    def timed_body(self):
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = io.BytesIO(json.dumps(
+            {"audio": "SUQz", "timestamps": [{"word": "The", "start_time": 0.0, "end_time": 0.2}]}).encode())
+        return resp
+
+    def test_timed_voice_tries_again_once_kokoro_is_back_after_dropping_the_connection(self):
+        import http.client
+        models_ok = mock.MagicMock()  # revive_kokoro's /models check: Kokoro is up again
+        calls = [http.client.RemoteDisconnected("gone"), models_ok, self.timed_body()]
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(hook, "voicemode_tts", return_value=self.URL), \
+                mock.patch.object(hook, "_kokoro_dead", False), \
+                mock.patch.object(hook.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+                mock.patch.object(hook._NO_PROXY, "open", side_effect=calls) as opened, \
+                mock.patch.object(hook, "render") as plain:
+            words = hook.render_timed("The", os.path.join(d, "a.mp3"))
+        self.assertEqual(words, [["The", 0.0, 0.2]])
+        plain.assert_not_called()
+        self.assertTrue(opened.call_args_list[2][0][0].full_url.endswith("/dev/captioned_speech"))
+
+    def test_timed_voice_tries_again_only_once(self):
+        import http.client
+        calls = [http.client.RemoteDisconnected("gone"), mock.MagicMock(), http.client.RemoteDisconnected("gone again")]
+        with mock.patch.object(hook, "voicemode_tts", return_value=self.URL), \
+                mock.patch.object(hook, "_kokoro_dead", False), \
+                mock.patch.object(hook.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+                mock.patch.object(hook._NO_PROXY, "open", side_effect=calls) as opened, \
+                mock.patch.object(hook, "render") as plain:
+            self.assertIsNone(hook.render_timed("hi", "/tmp/x.mp3"))
+        self.assertEqual(opened.call_count, 3)
+        plain.assert_called_once()
+
+    def test_a_timed_voice_timeout_is_not_tried_again(self):
+        with mock.patch.object(hook, "voicemode_tts", return_value=self.URL), \
+                mock.patch.object(hook._NO_PROXY, "open", side_effect=TimeoutError("slow")) as opened, \
+                mock.patch.object(hook, "render") as plain:
+            self.assertIsNone(hook.render_timed("hi", "/tmp/x.mp3"))
+        self.assertEqual(opened.call_count, 1)
+        plain.assert_called_once()
+
+    def test_a_refused_connection_counts_as_dropped(self):
+        import urllib.error
+        self.assertTrue(hook._dropped(urllib.error.URLError(ConnectionRefusedError(61, "refused"))))
+        self.assertFalse(hook._dropped(urllib.error.URLError("timed out")))
+        self.assertFalse(hook._dropped(TimeoutError()))
+
     def test_the_script_route_carries_the_words_and_the_plan(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(server, "ROOT", root):
             rid = "20990101-000000-abcdef"
