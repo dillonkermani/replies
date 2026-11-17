@@ -2778,7 +2778,7 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
    moves that line; visuals sit above the band it may fill (--ccpr), so they never jump either. */
 .ccprev{position:absolute;bottom:calc(100% - var(--ccy) + .4em);left:0;right:0;margin:0 auto;width:min(29ch,90vw);
   text-align:center;color:color-mix(in srgb,var(--ink) 38%,transparent);font-family:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
-  font-size:calc(var(--ccfs) * .55);font-weight:400;line-height:1.22;text-wrap:balance;overflow-wrap:anywhere;
+  font-size:calc(var(--ccfs) * .55);font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .ccprev.in{animation:ccin .35s ease both}
 .ccpill{position:absolute;left:0;top:0;z-index:-1;border-radius:.22em;background:var(--accent-soft);opacity:0;
@@ -4071,10 +4071,40 @@ let ccBeat=-1,ccClk={ct:-1,pt:0,run:false};
 function ccNow(){const ct=audio.currentTime,p=performance.now();
   if(audio.paused||!ccClk.run||ct!==ccClk.ct){ccClk={ct,pt:p,run:!audio.paused};return ct}
   return ct+Math.min(.25,(p-ccClk.pt)/1000*(audio.playbackRate||1))}
-function ccRender(c,prev){const t=$('#cc .cct'),p=$('#cc .ccprev');t.replaceChildren(ccEl('span','ccpill'));
+let ccFx=[];
+const ccCalm=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Ends a phrase change still in motion: its stand-ins go and the real lines show as they are.
+function ccSettle(){ccFx.forEach(a=>a.cancel());ccFx=[];document.querySelectorAll('#cc .ccghost').forEach(g=>g.remove());$('#cc .ccprev').style.opacity=''}
+function ccRender(c,prev){const t=$('#cc .cct'),p=$('#cc .ccprev');ccSettle();
+  const old=[...t.querySelectorAll('.ccw')].map(e=>e.textContent).join(' ');
+  // The usual step forward is one motion: the phrase just read rises and shrinks into the line above,
+  // the line that was there drifts up and fades, and the new phrase fades in where the eye already is.
+  // A seek or the clip's first phrase just fades in.
+  const glide=!!prev&&prev===old&&!ccCalm()&&!$('#cc').hidden;let g=null,pg=null;
+  if(glide){g=t.cloneNode(true);g.classList.add('ccghost');g.classList.remove('in');g.querySelector('.ccpill')?.remove();
+    g.querySelectorAll('.ccw').forEach(e=>{e.classList.remove('on');e.classList.add('past')});t.after(g);
+    if(p.textContent){pg=p.cloneNode(true);pg.classList.add('ccghost');pg.classList.remove('in');p.after(pg)}}
+  t.replaceChildren(ccEl('span','ccpill'));
   c.ws.forEach((x,m)=>{if(m)t.append(' ');t.append(ccEl('span','ccw',x))});
   p.textContent=prev||'';
-  [t,p].forEach(e=>{e.classList.remove('in');void e.offsetWidth;e.classList.add('in')})}
+  [t,p].forEach(e=>e.classList.remove('in'));
+  if(!glide){[t,p].forEach(e=>{void e.offsetWidth;e.classList.add('in')});return}
+  const ms=(audio.playbackRate||1)>1.25?320:440,easing='cubic-bezier(.22,.7,.18,1)';
+  const a=g.getBoundingClientRect(),b=p.getBoundingClientRect(),
+    k=parseFloat(getComputedStyle(p).fontSize)/parseFloat(getComputedStyle(t).fontSize)||.55;
+  // Scaled from its bottom centre onto the line above, on the eased curve. The line above is wider
+  // than the shrunk phrase, so it may wrap differently: the fade runs on plain time instead, dimming
+  // to the line's shade (.46 takes read words at 82% ink to its 38%) and then cross-fading into the
+  // real line, so the ink on screen stays even and nothing blinks or reflows.
+  g.style.transformOrigin='50% 100%';
+  ccFx.push(g.animate([{transform:'none'},{transform:`translate(${(b.left+b.width/2)-(a.left+a.width/2)}px,${b.bottom-a.bottom}px) scale(${k})`}],
+    {duration:ms,easing,fill:'forwards'}));
+  const fd=g.animate([{opacity:1},{opacity:.46,offset:.35},{opacity:0,offset:.85},{opacity:0}],{duration:ms,fill:'forwards'});
+  fd.onfinish=()=>g.remove();ccFx.push(fd);
+  ccFx.push(p.animate([{opacity:0},{opacity:0,offset:.35},{opacity:1,offset:.85},{opacity:1}],{duration:ms}));
+  if(pg){const up=pg.animate([{transform:'none',opacity:1},{transform:'translateY(-.7em)',opacity:0}],{duration:ms*.8,easing,fill:'forwards'});
+    up.onfinish=()=>pg.remove();ccFx.push(up)}
+  ccFx.push(t.animate([{opacity:0,transform:'translateY(.35em)'},{opacity:1,transform:'none'}],{duration:ms,delay:ms*.18,easing,fill:'backwards'}))}
 // Lights the spoken word: words before it are read, words after it still to come; a soft marker
 // glides from word to word. Only colour and the marker change, so the line itself never moves.
 function ccMark(){const t=$('#cc .cct'),ws=t.querySelectorAll('.ccw'),pill=t.querySelector('.ccpill');
