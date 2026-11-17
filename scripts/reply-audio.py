@@ -74,8 +74,21 @@ STYLES = {
     "relaxed": {"speed": 0.85, "length": "Speak at a calm, learning pace for roughly 60 to 150 seconds (about "
                 "150 to 350 words): briefly explain any term the listener may not know, say why each step "
                 "matters, and keep to one idea per sentence. A short reply still gets a short script."},
-    "standard": {"speed": 1.0, "length": "Aim for roughly 30 to 90 seconds of speech (about 80 to 220 words); "
-                 "a short reply gets a short script."},
+    # Standard: what the listener acts on, ranked, in under a minute; anything that doesn't fit is
+    # named as left for the text. `cap` is the hard backstop (fit_script), 90 s at ~187 words a minute.
+    "standard": {"speed": 1.0, "cap": 280, "length": "Keep it under a minute: at most 170 words, even for a "
+                 "long reply with many items; a short reply gets a short script. Say "
+                 "only what the listener acts on, in this order of importance: the outcome in one sentence, "
+                 "then decisions only they can make, then warnings and risks, then actions they need to "
+                 "take. Give each recommendation one clause of why. Leave out how the work went (checks run "
+                 "or re-run, cleanup, test counts, what was tried) and item-by-item status of things that "
+                 "are fine. Shorten by cutting items, not by blurring the ones you keep: a step the listener "
+                 "must do keeps who does it and when (\"before merging\", \"straight away\"), and separate "
+                 "causes or conditions stay separate. If the important items don't all fit, drop by rank "
+                 "alone: actions before warnings, warnings before decisions, never by how small an item "
+                 "feels. Then say in one sentence how many you left for the written reply, for example "
+                 "\"Two smaller items are in the written reply.\" That sentence is the only time you mention "
+                 "the written reply, and it comes just before any closing question."},
     "brief": {"speed": 1.1, "length": "Keep it brief: at most 80 words, in three to five short sentences: the "
               "outcome, anything that needs their attention, and what they need to do. No background, no "
               "explanation of how; stop as soon as those are said, even for a long reply."},
@@ -95,6 +108,15 @@ backup job").
 times said naturally.
 - Use only facts that are in the source. Do not add, guess, or soften anything. Keep warnings."""
 
+# Cutting bloat from the spoken script, adapted from pstack's unslop rules to speech.
+WORDING_RULES = """- No setups or filler: no "here's the thing", "so why?", "the good news is", "here's \
+what landed", "let me explain", no chatbot phrases, no generic wrap-up. Say each fact once and \
+don't recap at the end.
+- No stacked hedges: say a caveat once, plainly.
+- Use the real number of items; don't force them into threes.
+- Active voice, plain words, few adverbs.
+- Still whole spoken sentences: no dropped words, symbols, arrows or abbreviations."""
+
 REWRITE_PROMPT = f"""You turn a coding assistant's written reply into a short spoken script that \
 will be played as audio to the person who asked. The written reply already carries every detail; \
 the audio exists to help them understand the situation at a high level and make their decisions. \
@@ -109,7 +131,9 @@ implementation detail and step-by-step mechanics.
 - If the reply asks the person to decide something, end with exactly one plain question that \
 names the choice and the recommended option. Otherwise do not ask anything.
 {SPEECH_RULES}
-- Do not say this is a summary or mention the written reply.
+{WORDING_RULES}
+- Do not say this is a summary, and do not mention the written reply unless the length rule above \
+tells you to.
 
 Output format: the first line is a title of 3 to 8 words naming the topic (same naming rules, no \
 trailing period). Then one blank line. Then the spoken script.
@@ -254,6 +278,28 @@ def ask_claude(system_prompt, user_input):
         log(f"claude rc={res.returncode} stdout={len(out)} chars stderr={res.stderr.strip()[-300:]!r}")
         return None
     return out
+
+
+LEFT_FOR_TEXT = "The rest is in the written reply."
+
+
+def fit_script(text, cap):
+    """A script over `cap` words, cut back by whole sentences from the end of its body: the opening
+    outcome and a closing question always stay, and the cut is named as left for the text. The
+    script is ranked most important first, so the end of the body is what matters least."""
+    sents = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+    if len(text.split()) <= cap or len(sents) < 3:
+        return text
+    head, body = sents[0], sents[1:]
+    ask = [body.pop()] if body[-1].rstrip("\"')”’").endswith("?") else []
+    if body and "written reply" in body[-1]:  # the model's own count would be wrong after the cut
+        body.pop()
+    count = lambda ss: sum(len(s.split()) for s in ss)
+    budget = cap - count([head, LEFT_FOR_TEXT] + ask)
+    while body and count(body) > budget:
+        body.pop()
+    log(f"script over {cap} words: cut to {count([head, *body, LEFT_FOR_TEXT, *ask])}")
+    return " ".join([head, *body, LEFT_FOR_TEXT, *ask])
 
 
 def cap_words(text, cap=CLIP_CAP):
@@ -598,6 +644,8 @@ def render_reply(rid):
     result = conversational(raw, style)
     if result:
         meta["title"], meta["script"] = result
+        if STYLES[style].get("cap"):
+            meta["script"] = fit_script(meta["script"], STYLES[style]["cap"])
     else:
         meta["script"] = speakable(raw)
         meta["title"] = first_sentence(meta["script"], 60)
