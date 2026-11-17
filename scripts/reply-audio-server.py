@@ -2756,38 +2756,61 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .qfold .qa b{color:var(--ink);font-weight:600;margin-right:4px}
 .qfold .qa i{font-style:normal;color:var(--amber)}
 /* Focus captions: the playing clip's words, a few at a time, in a calm serif over a soft wash.
-   Only the size pill takes taps; the header above stays usable. --cchead is the header's height
+   A tap anywhere on them closes them rather than reaching the page behind the wash; the options
+   pill keeps its own taps and the header above stays usable. --cchead is the header's height
    (set by the script). The caption's first line sits at --ccy: about mid-screen, low enough to leave
-   room for a visual under the header, and high enough that five lines clear the size pill. */
-.cc{position:fixed;inset:0;z-index:9;pointer-events:none;--cchead:0px;
-  --ccfs:min(calc(clamp(30px,6.4vw,58px) * var(--ccz,1)),11vw);
+   room for a visual under the header, and high enough that five lines clear the options pill. */
+.cc{position:fixed;inset:0;z-index:9;--cchead:0px;
+  --ccfs:min(calc(clamp(30px,6.4vw,58px) * var(--ccz,1)),11vw);--ccpr:calc(var(--ccfs) * 1.6);
+  --ccd:460ms;--cce:cubic-bezier(.25,.8,.25,1);
+  -webkit-tap-highlight-color:transparent;
   --ccy:min(calc(100% - 92px - 6.1 * var(--ccfs)),max(52%,calc(var(--cchead) + 180px)));
   background:radial-gradient(ellipse 70% 45% at 50% 52%,color-mix(in srgb,var(--bg) 92%,transparent) 0%,color-mix(in srgb,var(--bg) 70%,transparent) 55%,transparent 100%)}
 .cc[hidden]{display:none}
-/* The caption's first line sits at a fixed height (--ccy) and longer phrases grow downward, so a
-   phrase change, a visual appearing or a size step never moves the line being read. */
-.cct{position:absolute;top:var(--ccy);left:0;right:0;margin:0 auto;width:min(16ch,90vw);isolation:isolate;
+/* Caption lines. The phrase being spoken (cur) sits at a fixed height (--ccy) and longer phrases grow
+   downward, so a visual appearing or a size step never moves the line being read. The phrase before
+   it (prev) is that same line, shrunk to .55 and faded, just above; one moving on (gone) drifts up
+   and fades out; a new one (next) rises in. A phrase change only moves each line to its next state,
+   so every line glides from wherever it is, even mid-glide, and is never redrawn or swapped. The
+   prev line fits the band visuals leave above the caption (--ccpr) up to two lines. */
+.ccls{position:absolute;inset:0}
+.ccl{position:absolute;top:var(--ccy);left:0;right:0;margin:0 auto;width:min(16ch,90vw);isolation:isolate;
   text-align:center;color:var(--ink);font-family:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
-  font-size:var(--ccfs);font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;transition:opacity .4s ease}
-.cct.in{animation:ccin .35s ease both}
-.cct .ccw{color:color-mix(in srgb,var(--ink) 50%,transparent);transition:color .12s ease-out}
-.cct .ccw.past{color:color-mix(in srgb,var(--ink) 82%,transparent)}
-.cct .ccw.on{color:var(--ink)}
+  font-size:var(--ccfs);font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;
+  transform-origin:50% 0;will-change:transform,opacity;
+  transition:transform var(--ccd) var(--cce),opacity var(--ccd) var(--cce)}
+.ccl.next{opacity:0;transform:translateY(.3em)}
+.ccl.prev{transform:translateY(calc(-.55 * var(--h,0px) - .25em)) scale(.55)}
+.ccl.gone{opacity:0;transform:translateY(calc(-.55 * var(--h,0px) - .85em)) scale(.5);
+  transition:transform var(--ccd) var(--cce),opacity calc(var(--ccd) * .75) ease-out}
+.ccl.hide,.ccl.out{opacity:0}
+.ccl.out{transition:opacity calc(var(--ccd) * .6) ease-out}
+.ccl .ccw{color:color-mix(in srgb,var(--ink) 50%,transparent);transition:color .12s ease-out}
+.ccl .ccw.past{color:color-mix(in srgb,var(--ink) 82%,transparent)}
+.ccl .ccw.on{color:var(--ink)}
+.ccl.prev .ccw,.ccl.gone .ccw{color:color-mix(in srgb,var(--ink) 38%,transparent);transition:color var(--ccd) var(--cce)}
+.ccl:not(.cur) .ccpill{opacity:0!important}
+.ccl.still,.ccl.still .ccw{transition:none}
 .ccpill{position:absolute;left:0;top:0;z-index:-1;border-radius:.22em;background:var(--accent-soft);opacity:0;
   transition:transform .18s cubic-bezier(.3,.7,.3,1),width .18s cubic-bezier(.3,.7,.3,1),height .18s ease,opacity .2s ease}
 .ccpill.jump{transition:opacity .2s ease}
-/* Caption size: a small pill at the foot of the captions, the one part of them that takes taps. */
+/* Caption options: a small pill at the foot of the captions with the size steps and the
+   previous-phrase switch. With the switch off, visuals drop back down into the band it used. */
+.cc.noprev{--ccpr:0px}
+.ccsize .ccsep{flex:none;width:1px;margin:7px 3px;background:var(--line)}
+.ccsize .cctog{padding:0 14px;color:var(--muted)}
+.ccsize .cctog[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
 .ccsize{position:absolute;left:0;right:0;bottom:max(24px,calc(env(safe-area-inset-bottom) + 14px));margin:0 auto;width:max-content;
   display:flex;gap:2px;padding:4px;border-radius:999px;background:var(--panel-solid);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:auto}
 .ccsize button{min-width:48px;min-height:38px;border:0;border-radius:999px;background:transparent;color:var(--ink);font:inherit;font-size:15px;font-weight:650;cursor:pointer}
 @media (hover:hover){.ccsize button:hover:not(:disabled){background:var(--panel-2)}}
 .ccsize button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ccsize button:disabled{opacity:.35;cursor:default}
-.cc.paused .cct{opacity:.5}.cc.paused .ccvs{opacity:.85}
+.cc.paused .ccl.cur:not(.out){opacity:.5}.cc.paused .ccvs{opacity:.85}
 .cc.withv{background:radial-gradient(ellipse 90% 62% at 50% 50%,color-mix(in srgb,var(--bg) 97%,transparent) 0%,color-mix(in srgb,var(--bg) 92%,transparent) 58%,transparent 100%)}
 /* Visuals stand above the caption, bottom-aligned to it, and grow upward. */
-.ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100% - var(--ccy) + 22px);width:min(620px,92vw);
-  max-height:calc(var(--ccy) - var(--cchead) - 34px);overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
+.ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100% - var(--ccy) + 22px + var(--ccpr));width:min(620px,92vw);
+  max-height:calc(var(--ccy) - var(--cchead) - 34px - var(--ccpr));overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
 .ccvs>.ccv{transform-origin:50% 100%}
 .ccv{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;width:100%}
 .ccv>*{animation:ccpop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * .14s)}
@@ -2811,8 +2834,7 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .ccv .val{font:600 clamp(34px,8vw,56px)/1.1 ui-serif,"New York",Georgia,serif;color:var(--accent);text-wrap:balance}
 .ccv .txt{font-size:clamp(15px,3.4vw,20px);color:var(--muted)}
 @media (prefers-reduced-motion:reduce){.ccv>*{animation:none}}
-@keyframes ccin{from{opacity:.3}}
-@media (prefers-reduced-motion:reduce){.cct.in{animation:none}.cct,.ccpill{transition:none}}
+@media (prefers-reduced-motion:reduce){.ccl,.ccl .ccw,.ccpill{transition:none}}
 .mpanel .mlab{margin-top:12px;font-size:12px;font-weight:650;color:var(--muted)}
 .mtracks.vstyle{grid-template-columns:repeat(3,1fr);margin-top:6px}
 .pgh{font-size:11px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:8px 8px 2px}
@@ -3520,7 +3542,7 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 </header>
 <div id="ptr"><div class="ptrp" id="ptrp" role="status"><span class="pspin"></span><span id="ptrt"></span></div></div>
 <main><div id="todo"></div><div id="tree"><div class="empty">Loading…</div></div></main>
-<div class="cc" id="cc" hidden><div class="ccvs" aria-hidden="true"></div><div class="cct" aria-hidden="true"></div><div class="ccsize" role="group" aria-label="Caption size"><button id="ccm" title="Smaller captions" aria-label="Smaller captions">A−</button><button id="ccp" title="Larger captions" aria-label="Larger captions">A+</button></div></div>
+<div class="cc" id="cc" hidden><div class="ccvs" aria-hidden="true"></div><div class="ccls" aria-hidden="true"></div><div class="ccsize" role="group" aria-label="Caption options"><button id="ccm" title="Smaller captions" aria-label="Smaller captions">A−</button><button id="ccp" title="Larger captions" aria-label="Larger captions">A+</button><span class="ccsep" aria-hidden="true"></span><button id="ccl" class="cctog" title="Keep the phrase just spoken above the current one" aria-label="Show previous phrase" aria-pressed="true">Prev line</button></div></div>
 <div class="scrim" id="scrim" hidden></div>
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle" hidden>
   <div class="shead"><div class="grow"><div class="slabel" id="swho"></div><div class="stitle" id="stitle"></div></div>
@@ -4012,6 +4034,8 @@ function ccSplit(text){const words=text.split(/\s+/).filter(Boolean),out=[];let 
   const total=out.reduce((a,c)=>a+c.w,0)||1;let acc=0;out.forEach(c=>{c.at=acc/total;acc+=c.w;
     const n=c.ws.reduce((a,x)=>a+x.length+1,0)||1;let k=0;c.f=c.ws.map(x=>{const f=k/n;k+=x.length+1;return f})});  // each word's share of its phrase
   return out}
+// The phrase shown faintly above the current one: the one just spoken, or none at the clip's start.
+const ccPrev=(ch,i)=>i>0&&ch[i-1]?ch[i-1].t:'';
 // Each script word's start in seconds from the voice's timed tokens ([word, start, end]), or null.
 // The voice gives punctuation its own tokens and may split a word in two, so a word matches the run
 // of tokens that spells it; one it spelled differently gets a time between its neighbours.
@@ -4061,12 +4085,32 @@ let ccBeat=-1,ccClk={ct:-1,pt:0,run:false};
 function ccNow(){const ct=audio.currentTime,p=performance.now();
   if(audio.paused||!ccClk.run||ct!==ccClk.ct){ccClk={ct,pt:p,run:!audio.paused};return ct}
   return ct+Math.min(.25,(p-ccClk.pt)/1000*(audio.playbackRate||1))}
-function ccRender(c){const t=$('#cc .cct');t.replaceChildren(ccEl('span','ccpill'));
-  c.ws.forEach((x,m)=>{if(m)t.append(' ');t.append(ccEl('span','ccw',x))});
-  t.classList.remove('in');void t.offsetWidth;t.classList.add('in')}
+const ccCalm=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+function ccLine(ws,state){const e=ccEl('div','ccl '+state);e.append(ccEl('span','ccpill'));
+  ws.forEach((x,m)=>{if(m)e.append(' ');e.append(ccEl('span','ccw',x))});return e}
+// --h is the line's unscaled height, which places it, shrunk, just above the line below it
+const ccLift=e=>e.style.setProperty('--h',e.offsetHeight+'px');
+// a line leaves by moving on to `gone` (drifts up) or by fading `out` where it is, then is removed
+function ccGone(e,ms,how){if(how!=='out')e.classList.remove('cur','prev');e.classList.add(how||'gone');setTimeout(()=>e.remove(),ms+150)}
+function ccRender(c,prev){const box=$('#cc'),ls=$('#cc .ccls'),cur=ls.querySelector('.ccl.cur:not(.out)');
+  const ms=(audio.playbackRate||1)>1.25?340:460;box.style.setProperty('--ccd',ms+'ms');
+  const old=cur?[...cur.querySelectorAll('.ccw')].map(e=>e.textContent).join(' '):'';
+  // The usual step forward: the phrase just read rises and shrinks into the line above, the line
+  // that was there drifts up and fades, and the new phrase rises in where the eye already is.
+  // With the previous phrase switched off, the phrase just read drifts up and fades instead.
+  if(prev&&prev===old&&!ccCalm()&&!box.hidden){
+    ls.querySelectorAll('.ccl.prev:not(.out)').forEach(e=>ccGone(e,ms));
+    ccLift(cur);if(ccPrevOn)cur.classList.replace('cur','prev');else ccGone(cur,ms);
+    const e=ccLine(c.ws,'next');ls.append(e);void e.offsetWidth;e.classList.replace('next','cur');return}
+  // A seek, a new clip or its first phrase: the lines on screen fade where they are while the new
+  // ones, set in place, fade in.
+  ls.querySelectorAll('.ccl:not(.gone):not(.out)').forEach(x=>ccGone(x,ms,'out'));
+  const e=ccLine(c.ws,'cur still hide');ls.append(e);
+  if(prev&&ccPrevOn){const p=ccLine(prev.split(' '),'prev still hide');ls.append(p);ccLift(p)}
+  void ls.offsetWidth;ls.querySelectorAll('.still').forEach(x=>x.classList.remove('still','hide'))}
 // Lights the spoken word: words before it are read, words after it still to come; a soft marker
 // glides from word to word. Only colour and the marker change, so the line itself never moves.
-function ccMark(){const t=$('#cc .cct'),ws=t.querySelectorAll('.ccw'),pill=t.querySelector('.ccpill');
+function ccMark(){const t=$('#cc .ccl.cur:not(.out)');if(!t)return;const ws=t.querySelectorAll('.ccw'),pill=t.querySelector('.ccpill');
   ws.forEach((e,m)=>{e.classList.toggle('past',m<ccWi);e.classList.toggle('on',m===ccWi)});
   if(!pill)return;const e=ws[ccWi];if(!e){pill.style.opacity='0';return}
   const p=parseFloat(getComputedStyle(t).fontSize)*.12,first=pill.style.opacity!=='1';
@@ -4090,7 +4134,7 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   if(ccChunks.pending)ccRefresh();
   box.classList.toggle('withv',bi>=0);
   if(bi!==ccBeat){ccBeat=bi;const vs=box.querySelector('.ccvs');vs.replaceChildren(...(bi>=0?[ccVisual(ccChunks.beats[bi])]:[]));ccFit()}
-  if(i!==ccIdx){ccIdx=i;ccWi=-2;ccRender(ch[i])}
+  if(i!==ccIdx){ccIdx=i;ccWi=-2;ccRender(ch[i],ccPrev(ch,i))}
   // the word being spoken: the last one whose start has passed (its own time, or its share of the phrase)
   const c=ch[i],s0=at(c);let s1=i+1<ch.length?at(ch[i+1]):d;if(!isFinite(s1)||!(s1>s0))s1=s0+c.ws.length*.35;
   const wt=m=>c.ts&&c.ts[m]!=null?c.ts[m]:s0+(s1-s0)*c.f[m];
@@ -4109,8 +4153,20 @@ let ccZ=CC_SIZES.indexOf(1);try{const v=localStorage.getItem('replies-cc-size');
 function ccSize(step){ccZ=Math.max(0,Math.min(CC_SIZES.length-1,ccZ+step));try{localStorage.setItem('replies-cc-size',String(ccZ))}catch(_){}
   $('#cc').style.setProperty('--ccz',CC_SIZES[ccZ]);$('#ccm').disabled=ccZ===0;$('#ccp').disabled=ccZ===CC_SIZES.length-1;ccFit();if(ccWi>=0)ccMark()}
 $('#ccm').addEventListener('click',()=>ccSize(-1));$('#ccp').addEventListener('click',()=>ccSize(1));
+// previous phrase: on by default, kept per browser; switching it fades that line in or out in place
+let ccPrevOn=true;try{ccPrevOn=localStorage.getItem('replies-cc-prev')!=='0'}catch(_){}
+function ccPrevSet(on){ccPrevOn=on;try{localStorage.setItem('replies-cc-prev',on?'1':'0')}catch(_){}
+  const box=$('#cc'),ls=$('#cc .ccls'),ms=parseFloat(getComputedStyle(box).getPropertyValue('--ccd'))||460;
+  $('#ccl').setAttribute('aria-pressed',String(on));box.classList.toggle('noprev',!on);
+  if(!on)ls.querySelectorAll('.ccl.prev:not(.out)').forEach(e=>ccGone(e,ms,'out'));
+  else if(ccChunks&&ccIdx>0&&!ls.querySelector('.ccl.prev:not(.out)')){const t=ccPrev(ccChunks.chunks,ccIdx);
+    if(t){const p=ccLine(t.split(' '),'prev still hide');ls.append(p);ccLift(p);void p.offsetWidth;p.classList.remove('still','hide')}}
+  ccFit()}
+$('#ccl').addEventListener('click',()=>ccPrevSet(!ccPrevOn));
+// a tap on the captions (not on their options) closes them instead of reaching the page behind
+$('#cc').addEventListener('click',e=>{if(!e.target.closest('.ccsize'))ccSet(false)});
 window.addEventListener('resize',()=>{if(ccOn)ccLayout()});
-ccSize(0);ccSet(ccOn);
+ccSize(0);ccPrevSet(ccPrevOn);ccSet(ccOn);
 audio.addEventListener('ended',()=>{if(cur&&(heard[cur.file]||0)>=.9)markHeard(1,true);if(queue.length){const n=queue.shift();cur=null;play(n.key,n.file,n.label)}else syncButtons()});
 // Auto: a reply that first shows up after the page loaded plays by itself once its audio is ready,
 // oldest first, and only when nothing else has the speaker: not over a clip that is playing or paused
