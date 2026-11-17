@@ -83,8 +83,9 @@ STYLES = {
                  "take. Give each recommendation one clause of why. Leave out how the work went (checks run "
                  "or re-run, cleanup, test counts, what was tried) and item-by-item status of things that "
                  "are fine. Shorten by cutting items, not by blurring the ones you keep: a step the listener "
-                 "must do keeps who does it and when (\"before merging\", \"straight away\"), and separate "
-                 "causes or conditions stay separate. If the important items don't all fit, drop by rank "
+                 "must do keeps who does it and when (\"before merging\", \"straight away\"), a limit on a "
+                 "recommendation stays with it (\"most commits, but card changes still take 45 minutes\"), "
+                 "and separate causes or conditions stay separate. If the important items don't all fit, drop by rank "
                  "alone: actions before warnings, warnings before decisions, never by how small an item "
                  "feels. Then say in one sentence how many you left for the written reply, for example "
                  "\"Two smaller items are in the written reply.\" That sentence is the only time you mention "
@@ -115,7 +116,10 @@ don't recap at the end.
 - No stacked hedges: say a caveat once, plainly.
 - Use the real number of items; don't force them into threes.
 - Active voice, plain words, few adverbs.
-- Still whole spoken sentences: no dropped words, symbols, arrows or abbreviations."""
+- Still whole spoken sentences: no dropped words, symbols, arrows or abbreviations.
+- Keep who did what as the source says it; don't claim as yours work it credits to someone else.
+- Don't turn figures into a verdict ("healthy", "fine") the source doesn't give; say the figure \
+or leave it out."""
 
 REWRITE_PROMPT = f"""You turn a coding assistant's written reply into a short spoken script that \
 will be played as audio to the person who asked. The written reply already carries every detail; \
