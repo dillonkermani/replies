@@ -962,8 +962,9 @@ class CaptionWordTiming(unittest.TestCase):
 
     def test_the_page_draws_the_previous_phrase_above_the_caption(self):
         page = server.PAGE
-        self.assertLess(page.index('<div class="ccprev"'), page.index('<div class="cct"'))
+        self.assertIn('<div class="ccls" aria-hidden="true"></div>', page)
         self.assertIn("ccRender(ch[i],ccPrev(ch,i))", page)
+        self.assertIn(".ccl.prev{transform:translateY(", page)
 
 
 @unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")  # CI must run these
