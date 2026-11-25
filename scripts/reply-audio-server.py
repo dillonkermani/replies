@@ -4329,6 +4329,12 @@ $('#mpanel').addEventListener('click',ev=>{ev.stopPropagation();const b=ev.targe
 $('#mvol').addEventListener('input',ev=>music.volume(ev.target.value/100));
 document.addEventListener('click',ev=>{if(!$('#mpanel').hidden&&!ev.target.closest('#mpanel,#mus'))musicPanel(false)});
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&!$('#mpanel').hidden){musicPanel(false);$('#mus').focus()}});
+// Space plays or pauses the current clip, unless it's typing or a control reached by keyboard (Tab)
+// that space should press. A button last clicked with the mouse gives space to the clip.
+document.addEventListener('keydown',ev=>{if(ev.key!==' '||ev.ctrlKey||ev.metaKey||ev.altKey||ev.isComposing||!cur)return;
+  const t=ev.target;if(t.closest&&t.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;
+  if(t!==document.body&&t.matches&&t.matches(':focus-visible'))return;
+  ev.preventDefault();if(ev.repeat)return;if(audio.paused){setWant(null);audio.play()}else audio.pause()});
 audio.addEventListener('play',()=>music.duck('voice',true));
 for(const t of['pause','ended','emptied'])audio.addEventListener(t,()=>music.duck('voice',!audio.paused));
 const stext=$('#stext'),sheet=$('#sheet'),mic=$('#mic');let target=null,opener=null,drafts={},sending=false;
