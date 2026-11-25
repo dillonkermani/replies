@@ -4093,7 +4093,7 @@ async function ccLoad(file,force){if(!force&&ccScripts.has(file))return ccScript
   const data={chunks,beats,pending:!!(w&&w.length)&&!Array.isArray(j.visuals),asked:Date.now(),tries:0};
   if(!data.pending)ccScripts.set(file,data);return data}
 function ccRefresh(){const c=ccChunks,file=ccFile;if(c.busy||c.tries>=80||Date.now()-c.asked<3000)return;c.busy=true;c.tries++;
-  ccLoad(file,true).then(n=>{c.busy=false;c.asked=Date.now();if(n&&!n.pending&&ccChunks===c&&ccFile===file){ccChunks=n;ccBeat=-1;ccShow()}})}
+  ccLoad(file,true).then(n=>{c.busy=false;c.asked=Date.now();if(n&&!n.pending&&ccChunks===c&&ccFile===file){ccChunks=n;ccBeat=-2;ccShow()}})}
 const CC_KINDS=['chips','code','flow','compare','list','callout'];
 function ccEl(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=String(text);return e}
 const ccArr=(v,n)=>(Array.isArray(v)?v:[]).slice(0,n);
@@ -4106,7 +4106,7 @@ function ccVisual(b){const box=ccEl('div','ccv k-'+b.kind),d=b.data||{};let i=0;
   else if(b.kind==='list')ccArr(d.items,4).forEach(x=>add(ccEl('div','li',x)));
   else{if(d.value)add(ccEl('div','val',d.value));add(ccEl('div','txt',d.text||''))}
   return box}
-let ccBeat=-1,ccHasV=false,ccUp=false,ccClk={ct:-1,pt:0,run:false};
+let ccBeat=-2,ccHasV=false,ccUp=false,ccClk={ct:-1,pt:0,run:false};
 // currentTime moves in steps on some browsers; between steps the clock runs on from the last one
 // (from the first playing frame, so a resume after a pause doesn't jump ahead)
 function ccNow(){const ct=audio.currentTime,p=performance.now();
@@ -4170,11 +4170,11 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   let wi=-1;for(let m=0;m<c.ws.length&&wt(m)<=now;m++)wi=m;
   if(wi!==ccWi){ccWi=wi;ccMark()}
   box.classList.toggle('paused',audio.paused);if(!audio.paused)ccRaf=requestAnimationFrame(ccShow)}
-async function ccSync(){if(ccOn)ccLayout();if(ccOn&&cur&&cur.file&&ccFile!==cur.file){const file=cur.file;ccFile=file;ccIdx=-1;ccBeat=-1;ccChunks=null;
+async function ccSync(){if(ccOn)ccLayout();if(ccOn&&cur&&cur.file&&ccFile!==cur.file){const file=cur.file;ccFile=file;ccIdx=-1;ccBeat=-2;ccChunks=null;
     const ch=await ccLoad(file);if(!cur||cur.file!==file)return;ccChunks=ch}
   ccShow()}
 function ccSet(on){ccOn=on;try{localStorage.setItem('replies-cc',on?'1':'0')}catch(_){}
-  const b=$('#ccb');b.setAttribute('aria-pressed',String(on));b.classList.toggle('fast',on);ccFile='';ccIdx=-1;ccBeat=-1;ccSync()}
+  const b=$('#ccb');b.setAttribute('aria-pressed',String(on));b.classList.toggle('fast',on);ccFile='';ccIdx=-1;ccBeat=-2;ccSync()}
 $('#ccb').addEventListener('click',()=>ccSet(!ccOn));
 ['play','playing','pause','seeked','ended','emptied'].forEach(n=>audio.addEventListener(n,ccSync));
 // caption size: A− and A+ at the foot of the captions step through a few sizes, kept per browser as
