@@ -4017,7 +4017,7 @@ audio.addEventListener('pause',()=>{sounding=false;syncButtons();saveHeard(true)
 audio.addEventListener('playing',()=>{sounding=true;syncButtons()});
 for(const t of['waiting','stalled','emptied','ended'])audio.addEventListener(t,()=>{sounding=false;syncButtons()});
 const seek=$('#seek');let dragging=false,lastT=-1,run=false,from=0;
-const SPEEDS=[1,1.25,1.5,1.75,2],SPD='replies.speed.v1';let speed=1;
+const SPEEDS=[1,1.25,1.5,1.75,2,.75,.85],SPD='replies.speed.v1';let speed=1;
 try{const v=+localStorage.getItem(SPD);if(SPEEDS.includes(v))speed=v}catch(_){}
 function setSpeed(v){speed=v;audio.defaultPlaybackRate=v;audio.playbackRate=v;  // default survives a new src
   const b=$('#spd');b.textContent=v+'×';b.setAttribute('aria-label','Playback speed '+v+'×');b.classList.toggle('fast',v!==1);
