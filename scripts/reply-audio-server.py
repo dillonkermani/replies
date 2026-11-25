@@ -2806,6 +2806,8 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
    previous-phrase switch. With the switch off, visuals drop back down into the band it used. */
 .ccsize .ccsep{flex:none;width:1px;margin:7px 3px;background:var(--line)}
 .ccsize .cctog{padding:0 14px;color:var(--muted)}
+.ccsize button.ccsy{min-width:38px}
+.ccsize .ccsv{align-self:center;min-width:4.6em;text-align:center;font-size:13px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
 .ccsize .cctog[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
 .ccsize{position:absolute;left:0;right:0;bottom:max(24px,calc(env(safe-area-inset-bottom) + 14px));margin:0 auto;width:max-content;
   display:flex;gap:2px;padding:4px;border-radius:999px;background:var(--panel-solid);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:auto}
@@ -2813,6 +2815,11 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 @media (hover:hover){.ccsize button:hover:not(:disabled){background:var(--panel-2)}}
 .ccsize button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ccsize button:disabled{opacity:.35;cursor:default}
+/* A phone keeps the pill inside the screen's 16px margins: tighter buttons, "Prev" for "Prev line",
+   and a second row rather than running off the edge if it still doesn't fit. */
+@media (max-width:430px){.ccsize{max-width:calc(100% - 32px);flex-wrap:wrap;justify-content:center;gap:1px}
+  .ccsize button{min-width:40px}.ccsize button.ccsy{min-width:34px}.ccsize .cctog{padding:0 10px}
+  .ccsize .ccsep{margin:7px 2px}.ccsize .ccsv{min-width:3.7em}.cclong{display:none}}
 .cc.paused .ccl.cur:not(.out){opacity:.5}.cc.paused .ccvs{opacity:.85}
 .cc.withv{background:radial-gradient(ellipse 90% 62% at 50% 50%,color-mix(in srgb,var(--bg) 97%,transparent) 0%,color-mix(in srgb,var(--bg) 92%,transparent) 58%,transparent 100%)}
 /* Visuals stand above the caption, bottom-aligned to it, and grow upward. */
@@ -3569,7 +3576,7 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 </header>
 <div id="ptr"><div class="ptrp" id="ptrp" role="status"><span class="pspin"></span><span id="ptrt"></span></div></div>
 <main><div id="todo"></div><div id="tree"><div class="empty">Loading…</div></div></main>
-<div class="cc" id="cc" hidden><div class="ccvs" aria-hidden="true"></div><div class="ccls" aria-hidden="true"></div><div class="ccsize" role="group" aria-label="Caption options"><button id="ccm" title="Smaller captions" aria-label="Smaller captions">A−</button><button id="ccp" title="Larger captions" aria-label="Larger captions">A+</button><span class="ccsep" aria-hidden="true"></span><button id="ccl" class="cctog" title="Keep the phrase just spoken above the current one" aria-label="Show previous phrase" aria-pressed="true">Prev line</button></div></div>
+<div class="cc" id="cc" hidden><div class="ccvs" aria-hidden="true"></div><div class="ccls" aria-hidden="true"></div><div class="ccsize" role="group" aria-label="Caption options"><button id="ccm" title="Smaller captions" aria-label="Smaller captions">A−</button><button id="ccp" title="Larger captions" aria-label="Larger captions">A+</button><span class="ccsep" aria-hidden="true"></span><button id="ccl" class="cctog" title="Keep the phrase just spoken above the current one" aria-label="Show previous phrase" aria-pressed="true">Prev<span class="cclong"> line</span></button><span class="ccsep" aria-hidden="true"></span><button id="cce" class="ccsy" title="Light words earlier" aria-label="Light words earlier">−</button><span id="ccsv" class="ccsv" title="Caption sync">Sync</span><button id="ccd" class="ccsy" title="Light words later" aria-label="Light words later">+</button></div></div>
 <div class="scrim" id="scrim" hidden></div>
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle" hidden>
   <div class="shead"><div class="grow"><div class="slabel" id="swho"></div><div class="stitle" id="stitle"></div></div>
@@ -4155,7 +4162,7 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   // until the clip's length is known, a chunk or beat timed by its share waits, unless it opens the clip
   // CC_LEAD is real seconds: the word lights a beat before it is heard, so its quick fade and the marker's
   // glide finish as it is said rather than after. Scaled by speed, so 2x is just as far ahead to the eye.
-  const d=dur(),now=ccNow()+CC_LEAD*(audio.playbackRate||1),ch=ccChunks.chunks,share=x=>d?x*d:x?Infinity:0;
+  const d=dur(),now=ccNow()+(CC_LEAD-ccOff)*(audio.playbackRate||1),ch=ccChunks.chunks,share=x=>d?x*d:x?Infinity:0;
   const at=c=>c.t0!=null?c.t0:share(c.at);let i=0;while(i+1<ch.length&&at(ch[i+1])<=now)i++;
   const bs=ccChunks.beats,bt=b=>b.t!=null?b.t:share(b.f||0);let bi=-1;
   bs.forEach((b,k)=>{if(bt(b)<=now&&(bi<0||bt(b)>=bt(bs[bi])))bi=k});  // the latest beat to have started
@@ -4184,6 +4191,14 @@ let ccZ=CC_SIZES.indexOf(1);try{const s=localStorage.getItem('replies-cc-scale')
 function ccSize(step){ccZ=Math.max(0,Math.min(CC_SIZES.length-1,ccZ+step));try{localStorage.setItem('replies-cc-scale',String(CC_SIZES[ccZ]));localStorage.removeItem('replies-cc-size')}catch(_){}
   $('#cc').style.setProperty('--ccz',CC_SIZES[ccZ]);$('#ccm').disabled=ccZ===0;$('#ccp').disabled=ccZ===CC_SIZES.length-1;ccFit();if(ccWi>=0)ccMark()}
 $('#ccm').addEventListener('click',()=>ccSize(-1));$('#ccp').addEventListener('click',()=>ccSize(1));
+// caption sync: the browser's clock doesn't include all of the output's delay (Bluetooth headphones
+// add a few tenths of a second it never reports), so the listener can light words earlier (−) or
+// later (+) in 0.05 s steps. Kept per browser, so a phone and a Mac each keep their own.
+let ccOff=0;try{const v=+localStorage.getItem('replies-cc-sync');if(isFinite(v)&&Math.abs(v)<=1)ccOff=v}catch(_){}
+function ccSyncStep(step){ccOff=Math.round(Math.max(-1,Math.min(1,ccOff+step*.05))*100)/100;try{localStorage.setItem('replies-cc-sync',String(ccOff))}catch(_){}
+  $('#ccsv').textContent=ccOff?(ccOff>0?'+':'−')+Math.abs(ccOff).toFixed(2)+'s':'Sync';$('#cce').disabled=ccOff<=-1;$('#ccd').disabled=ccOff>=1;
+  ccWi=-2;if(audio.paused)ccShow()}
+$('#cce').addEventListener('click',()=>ccSyncStep(-1));$('#ccd').addEventListener('click',()=>ccSyncStep(1));ccSyncStep(0);
 // previous phrase: on by default, kept per browser; switching it fades that line in or out in place
 let ccPrevOn=true;try{ccPrevOn=localStorage.getItem('replies-cc-prev')!=='0'}catch(_){}
 function ccPrevSet(on){ccPrevOn=on;try{localStorage.setItem('replies-cc-prev',on?'1':'0')}catch(_){}
