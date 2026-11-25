@@ -1500,5 +1500,90 @@ class NewChatFolderPicker(unittest.TestCase):
         self.assertIn("More folders than fit", self.run_js("return fsListHtml({path:'/a',entries:['x'],more:true})"))
 
 
+class ReplyBrief(unittest.TestCase):
+    """Tapping a reply's row opens a written brief (summary and open to-dos) instead of the chat."""
+    RID = "20990101-000000-abcdef"
+    BRIEF = {"tldr": "Sync control shipped in 0.2.29.", "blocks": [
+        {"kind": "todo", "title": "Your move", "items": ["Reload the page", "Tune Sync by ear"]},
+        {"kind": "facts", "title": "Numbers", "items": ["Lead at 1x: 0.19 s"]},
+        {"kind": "chart", "title": "x", "items": ["dropped: unknown kind"]},
+        {"kind": "points", "title": "Empty", "items": []}]}
+
+    def fake_claude(self, system_prompt, user_input):
+        if system_prompt == hook.BRIEF_PROMPT:
+            self.brief_input = user_input
+            return "Here it is: " + json.dumps(self.BRIEF)
+        if system_prompt == hook.VISUALS_PROMPT:
+            return '{"beats": []}'
+        return "Sync shipped\n\nThe sync control is live. Reload to get it."
+
+    def test_the_hook_writes_a_brief_from_the_written_reply(self):
+        with tempfile.TemporaryDirectory() as out:
+            with open(os.path.join(out, self.RID + ".txt"), "w") as fh:
+                fh.write("The full written reply with `code` " * 40)
+            hook.write_json(os.path.join(out, self.RID + ".json"),
+                            {"id": self.RID, "kind": "reply", "status": "rendering", "audio": self.RID + ".mp3"})
+            with mock.patch.object(hook, "OUT_DIR", out), \
+                    mock.patch.object(hook, "STYLE_FILE", os.path.join(out, "style.json")), \
+                    mock.patch.object(hook, "ask_claude", side_effect=self.fake_claude), \
+                    mock.patch.object(hook._NO_PROXY, "open", side_effect=OSError("no network in tests")), \
+                    mock.patch.object(hook, "render"):
+                hook.render_reply(self.RID)
+            meta = json.load(open(os.path.join(out, self.RID + ".json")))
+        self.assertIn("full written reply", self.brief_input)  # the brief reads the written reply, not the short script
+        self.assertEqual(meta["brief"]["tldr"], "Sync control shipped in 0.2.29.")
+        self.assertEqual([b["kind"] for b in meta["brief"]["blocks"]], ["todo", "facts"])
+
+    def test_an_unusable_brief_is_left_out(self):
+        self.assertIsNone(hook.clean_brief({"tldr": " ", "blocks": [{"kind": "todo", "items": []}]}))
+        self.assertIsNone(hook.clean_brief("not a dict"))
+
+    def test_the_server_serves_the_brief_off_the_feed_and_keeps_ticks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "r")
+            os.mkdir(root)
+            hook.write_json(os.path.join(root, self.RID + ".json"),
+                            {"id": self.RID, "kind": "reply", "status": "ready", "audio": self.RID + ".mp3",
+                             "created": 1, "script": "Spoken.", "visuals": [], "brief": hook.clean_brief(self.BRIEF)})
+            with mock.patch.object(server, "ROOT", root), \
+                    mock.patch.object(server, "BRIEF_CHECKS_FILE", os.path.join(tmp, "brief-checks.json")):
+                code, out = server.reply_brief(self.RID)
+                self.assertEqual(code, 200)
+                self.assertEqual(out["brief"]["blocks"][0]["items"][0], "Reload the page")
+                self.assertTrue(out["final"])
+                self.assertEqual(server.check_brief(self.RID, "0.1", True), (200, {"checked": ["0.1"]}))
+                self.assertEqual(server.reply_brief(self.RID)[1]["checked"], ["0.1"])
+                self.assertEqual(server.check_brief(self.RID, "0.1", False), (200, {"checked": []}))
+                self.assertEqual(server.check_brief(self.RID, "../x", True)[0], 400)
+                self.assertEqual(server.check_brief(self.RID, "0.1", "yes")[0], 400)
+                self.assertEqual(server.reply_brief("../etc")[0], 400)
+                feed = server.entries_and_chats()
+                entries = feed[0] if isinstance(feed, tuple) else feed["entries"]
+                self.assertNotIn("brief", entries[0])
+
+    @unittest.skipUnless(NODE or os.environ.get("CI"), "node is not installed")
+    def test_the_page_draws_the_brief_with_a_checklist(self):
+        page = server.PAGE
+        esc = page.index("const esc=")
+        code = page[esc:page.index("\n", esc)] + "\nlet view='';const data={chats:[{id:'c1'}]};const chatPath=c=>'/c/'+c.id;\n" \
+            + page[page.index("const openAttr="):page.index("// A finished question card")]
+        body = ("briefs.set('r1',{brief:" + json.dumps(hook.clean_brief(self.BRIEF)) + ",checked:['0.1']});"
+                "return [briefHTML({id:'r1',chat:'c1'}),briefAttr({id:'r1',kind:'reply'}),briefAttr({id:'q',kind:'questions',chat:'c1'}),"
+                "(briefs.set('r2',{text:'One. Two. Three. Four.',final:true}),briefHTML({id:'r2',chat:'zz'}))]")
+        out = subprocess.run([NODE, "-e", code + "\nprocess.stdout.write(JSON.stringify((()=>{" + body + "})()))"],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        html, reply_attr, q_attr, fallback = json.loads(out.stdout)
+        self.assertIn('data-k="0.1" checked', html)
+        self.assertIn('data-k="0.0">', html)
+        self.assertIn("1/2", html)
+        self.assertIn("<b>Lead at 1x:</b> 0.19 s", html)
+        self.assertIn('data-open="c1"', html)  # the chat is still one tap away
+        self.assertIn('data-brief="r1"', reply_attr)
+        self.assertIn('data-open="c1"', q_attr)  # question cards still open the chat
+        self.assertEqual(fallback.count("<p>"), 2)
+        self.assertNotIn("data-open", fallback)
+
+
 if __name__ == "__main__":
     unittest.main()
