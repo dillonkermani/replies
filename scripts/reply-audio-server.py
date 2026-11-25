@@ -1404,6 +1404,52 @@ def set_mark(entry_id, state):
     return 200, {"ok": True}
 
 
+# A reply's brief (summary and open to-dos, written by the hook) opens under its row. Ticked
+# to-dos live here, not in the entry, so the hook stays the only writer of entry files.
+BRIEF_CHECKS_FILE = os.path.join(os.path.dirname(ROOT), "brief-checks.json")
+_checks_lock = threading.Lock()
+
+
+def checks_map():
+    """Entry id -> {"i": [ticked item keys], "t": when set}. Caller holds _checks_lock."""
+    saved = load(BRIEF_CHECKS_FILE)
+    if not isinstance(saved, dict):
+        return {}
+    return {k: v for k, v in saved.items() if ENTRY_ID.fullmatch(k) and isinstance(v, dict)
+            and isinstance(v.get("i"), list) and type(v.get("t")) in (int, float)}
+
+
+def reply_brief(entry_id):
+    """The brief, its ticked to-dos, and the spoken script for replies made before briefs existed."""
+    if not isinstance(entry_id, str) or not ENTRY_ID.fullmatch(entry_id):
+        return 400, {"error": "Bad request."}
+    e = load(os.path.join(ROOT, entry_id + ".json"))
+    if not e or e.get("kind") != "reply":
+        return 404, {"error": "Not found."}
+    with _checks_lock:
+        ticked = (checks_map().get(entry_id) or {}).get("i") or []
+    brief = e.get("brief") if isinstance(e.get("brief"), dict) else None
+    return 200, {"brief": brief, "checked": ticked, "text": e.get("script") if isinstance(e.get("script"), str) else "",
+                 "final": "visuals" in e or e.get("status") == "failed"}
+
+
+def check_brief(entry_id, key, done):
+    """Tick or untick one to-do ("<block>.<item>"). Keeps the newest 3000 replies' ticks."""
+    if not isinstance(entry_id, str) or not ENTRY_ID.fullmatch(entry_id) or not isinstance(done, bool) \
+            or not isinstance(key, str) or not re.fullmatch(r"\d\.\d", key):
+        return 400, {"error": "Bad request."}
+    with _checks_lock:
+        checks = checks_map()
+        ticked = [k for k in (checks.get(entry_id) or {}).get("i") or [] if k != key] + ([key] if done else [])
+        if ticked:
+            checks[entry_id] = {"i": ticked, "t": time.time()}
+        else:
+            checks.pop(entry_id, None)
+        keep = sorted(checks.items(), key=lambda kv: kv[1]["t"], reverse=True)[:3000]
+        write_json(BRIEF_CHECKS_FILE, dict(keep))
+    return 200, {"checked": ticked}
+
+
 # Todo lists: one plain markdown file per list, <id>.md, so Claude and a person can edit them by hand.
 # master.md is the default list other tooling knows by path: its file is never moved or deleted.
 TODO_DIR = os.path.expanduser("~/.claude/todo")
@@ -2224,7 +2270,7 @@ def entries_and_chats():
         if not e:
             continue
         described.add(m.group(1) + ".mp3")
-        for k in ("script", "words", "visuals"):  # captions fetch these one clip at a time (/api/script), so the list stays small
+        for k in ("script", "words", "visuals", "brief"):  # fetched one clip at a time (/api/script, /api/brief), so the list stays small
             e.pop(k, None)
         for q in (e.get("questions") or []) + (e.get("parts") or []):
             q.pop("script", None)
@@ -2417,6 +2463,11 @@ class Handler(BaseHTTPRequestHandler):
             code, out = clip_script((query.get("file") or [""])[0])
             self._send(code, "application/json", json.dumps(out).encode())
             return
+        if path == "/api/brief":
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            code, out = reply_brief((query.get("id") or [""])[0])
+            self._send(code, "application/json", json.dumps(out).encode())
+            return
         if path == "/api/style":
             self._send(200, "application/json", json.dumps({"style": voice_style()}).encode())
             return
@@ -2475,7 +2526,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stt":
             code, out = self._stt(body)
         elif path in ("/api/respond", "/api/respond/cancel", "/api/respond/retry", "/api/heard", "/api/marks",
-                      "/api/newchat", "/api/fs", "/api/style") \
+                      "/api/newchat", "/api/fs", "/api/style", "/api/brief/check") \
                 or path in TODO_POSTS:
             try:
                 req = json.loads(body)
@@ -2492,6 +2543,8 @@ class Handler(BaseHTTPRequestHandler):
                     code, out = 400, {"error": "Bad request."}
             elif path == "/api/marks":
                 code, out = set_mark(req.get("id"), req.get("state"))
+            elif path == "/api/brief/check":
+                code, out = check_brief(req.get("id"), req.get("key"), req.get("done"))
             elif path == "/api/newchat":
                 code, out = start_new_chat(req.get("text"), req.get("folder"))
             elif path == "/api/fs":
@@ -2911,8 +2964,9 @@ main{max-width:1080px;margin:0 auto;padding:14px max(16px,env(safe-area-inset-ri
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px 10px 14px;
   box-shadow:var(--shadow);display:flex;align-items:center;gap:12px}
 .card.qwrap{display:block}
-.card[data-open]{cursor:pointer;-webkit-tap-highlight-color:transparent}
-@media (hover:hover){.card[data-open]:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}}
+.card[data-open],.card[data-brief]{cursor:pointer;-webkit-tap-highlight-color:transparent}
+@media (hover:hover){.card[data-open]:hover,.card[data-brief]:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}}
+.card[aria-expanded="true"]{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
 .grow{flex:1;min-width:0}
 .title{font-weight:600;letter-spacing:-.01em;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;white-space:nowrap;overflow:hidden}
@@ -3466,6 +3520,25 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
   border-top-color:currentColor;animation:rspin .8s linear infinite;opacity:.7;pointer-events:none}
 @keyframes rspin{to{transform:rotate(360deg)}}
 /* a reply's labelled sub-recordings, nested under its card like a short branch of the spine */
+.brief{margin:6px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+  font-size:14.5px;line-height:1.45;overflow-wrap:anywhere;animation:bfade .18s ease-out}
+@keyframes bfade{from{opacity:0;transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.brief{animation:none}}
+.brief p{margin:0 0 8px}.brief .btl{font-weight:550}
+.brief .bb{margin-top:10px}.brief .bb:first-child{margin-top:0}
+.brief .bh{font-size:11.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+.brief .bn{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:var(--accent-soft);color:var(--accent);letter-spacing:0}
+.brief ul,.brief ol{margin:0;padding-left:20px}.brief li{margin:3px 0}
+.brief ul.todo{list-style:none;padding:0}
+.brief .bi{display:flex;gap:10px;align-items:flex-start;padding:5px 0;cursor:pointer}
+.brief .bi input{margin:2px 0 0;width:18px;height:18px;accent-color:var(--accent);flex:none;cursor:pointer}
+.brief li.done span{color:var(--muted);text-decoration:line-through}
+.brief .facts li b{font-weight:600}
+.brief code{font-size:12.5px;background:var(--panel-2);padding:1px 4px;border-radius:4px}
+.brief .bnone{color:var(--muted)}
+.brief .bfoot{display:flex;justify-content:flex-end;margin-top:8px;font-size:13px}
+.brief .bfoot a{color:var(--accent);text-decoration:none;padding:6px 2px}
+.brief .skel{height:12px;margin:6px 0}
 .subs{margin:6px 0 0 14px;padding-left:14px;border-left:2px solid var(--spine);display:flex;flex-direction:column;gap:6px}
 .sub{position:relative;display:flex;align-items:center;gap:10px;min-height:44px;padding:5px 8px 5px 10px;
   background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
@@ -3811,6 +3884,35 @@ function respState(r){if(r.status==='sent')return r.pickup?'In the chat’s queu
 function resps(e){if(view||!(e.responses||[]).length)return'';  // the chat view shows them as messages
   return `<div class="resps">${e.responses.map(r=>`<div class="resp ${esc(r.status)}">${esc(r.text)}<div class="rstate">${respState(r)}</div></div>`).join('')}</div>`}
 const openAttr=e=>!view&&data.chats.some(c=>c.id===e.chat)?` data-open="${esc(e.chat)}"`:'';
+// Tapping a reply's row opens its brief under it: a one-line summary, then the blocks the hook picked
+// for that reply (open to-dos as a checklist, key points, steps, facts). Replies voiced before briefs
+// existed show their spoken text. "Open chat" inside the brief still goes to the chat itself.
+const briefOpen=new Set(),briefs=new Map();
+const briefAttr=e=>e.kind==='reply'&&!e.legacy?` data-brief="${esc(e.id)}" aria-expanded="${briefOpen.has(e.id)}"`:openAttr(e);
+const bText=t=>esc(t).replace(/`([^`]+)`/g,'<code>$1</code>');
+function briefBlock(id,k,bi,done){const n=k.items.length,got=k.items.filter((_,i)=>done.has(bi+'.'+i)).length;
+  const items=k.items.map((t,i)=>{const key=bi+'.'+i;
+    if(k.kind==='todo'){const on=done.has(key);return `<li class="${on?'done':''}"><label class="bi"><input type="checkbox" data-bcheck="${esc(id)}" data-k="${key}"${on?' checked':''}><span>${bText(t)}</span></label></li>`}
+    const m=k.kind==='facts'&&/^([^:]{1,40}):\s+(.+)$/.exec(t);return m?`<li><b>${bText(m[1])}:</b> ${bText(m[2])}</li>`:`<li>${bText(t)}</li>`}).join('');
+  const tag=k.kind==='steps'?'ol':'ul';
+  return `<div class="bb ${k.kind}">${k.title?`<div class="bh">${esc(k.title)}${k.kind==='todo'?`<span class="bn">${got}/${n}</span>`:''}</div>`:''}<${tag} class="${k.kind}">${items}</${tag}></div>`}
+function briefHTML(e){const b=briefs.get(e.id),ch=!view&&data.chats.find(c=>c.id===e.chat);let body;
+  if(!b)body='<div class="skel" style="width:80%"></div><div class="skel" style="width:55%"></div>';
+  else if(b.brief){const done=new Set(b.checked||[]);
+    body=(b.brief.tldr?`<p class="btl">${bText(b.brief.tldr)}</p>`:'')+(b.brief.blocks||[]).map((k,bi)=>briefBlock(e.id,k,bi,done)).join('')}
+  else if(b.text){const ss=b.text.split(/(?<=[.!?])\s+/),ps=[];for(let i=0;i<ss.length;i+=3)ps.push(ss.slice(i,i+3).join(' '));
+    body=`<div class="bb bsp"><div class="bh">${b.final?'Spoken text':'Summary on its way · spoken text'}</div>${ps.map(p=>`<p>${esc(p)}</p>`).join('')}</div>`}
+  else body='<p class="bnone">Nothing to show for this reply yet.</p>';
+  return `<div class="brief" data-b="${esc(e.id)}">${body}${ch?`<div class="bfoot"><a href="${esc(chatPath(ch))}" data-open="${esc(ch.id)}">Open chat →</a></div>`:''}</div>`}
+async function loadBrief(id){let j=null;try{const r=await fetch('/api/brief?id='+encodeURIComponent(id),{cache:'no-store'});if(r.ok)j=await r.json()}catch(_){}
+  if(!j){if(!briefs.has(id))briefs.set(id,{text:'',final:true});if(briefOpen.has(id))render();return}
+  briefs.set(id,j);if(briefOpen.has(id))render();
+  if(!j.brief&&!j.final)setTimeout(()=>{if(briefOpen.has(id))loadBrief(id)},5000)}  // a reply still being voiced gets its brief a little later
+function toggleBrief(id){if(briefOpen.has(id))briefOpen.delete(id);else{briefOpen.add(id);loadBrief(id)}render()}
+function checkBrief(box){const id=box.dataset.bcheck,key=box.dataset.k,b=briefs.get(id);if(!b)return;const done=box.checked;
+  b.checked=(b.checked||[]).filter(k=>k!==key).concat(done?[key]:[]);render();
+  post('/api/brief/check',JSON.stringify({id,key,done}),{'Content-Type':'application/json'})
+    .then(r=>r.ok?r.json():null).then(j=>{if(j&&Array.isArray(j.checked)){b.checked=j.checked;render()}}).catch(()=>{})}
 // A finished question card (its dot shows a check or star, every question is answered, or it was
 // answered in the chat) folds to one line of answers; tapping it opens the cards again for this session.
 // A card with picks waiting to be sent stays open, so a tap never folds the options being picked.
@@ -3828,10 +3930,10 @@ function node(e){const isQ=e.kind==='questions';const busy=STATUS[e.status]&&e.s
       ${picks[e.id]&&pickable(e)?`<button class="btn sendpicks" data-sendpicks="${esc(e.id)}">Send ${Object.keys(picks[e.id]).length}/${n}</button>`:''}${replyBtn(e)}${files?`<button class="btn" data-all="${esc(e.id)}">▶ Play all</button>`:''}</div>
       ${qFold(e,`<div class="fan"><div class="lane"><div class="rail" style="--n:${n}">${e.questions.map((q,i)=>qCard(e,q,i)).join('')}</div></div></div>`)}${e.in_chat?`<div class="other inchat">Replied in chat: ${esc(e.in_chat)}</div>`:''}</div>${resps(e)}</div>`}
   const title=e.title||(e.legacy?'Earlier reply':'');
-  return `<div class="node ${busy?'busy':''}">${dotHTML(e.id,e.status==='ready'&&e.audio?[e.audio]:[])}<div class="card"${openAttr(e)}>
+  return `<div class="node ${busy?'busy':''}">${dotHTML(e.id,e.status==='ready'&&e.audio?[e.audio]:[])}<div class="card"${briefAttr(e)}>
     <div class="grow"><div class="title">${title?esc(title):'<div class="skel" style="width:55%"></div>'}</div>${meta(e)}</div>
     ${replyBtn(e)}
-    ${playBtn(e.id,e.status==='ready'?e.audio:null,title||'Reply',e.status==='failed'||!!e.legacy&&!e.audio)}</div>${subCards(e,title)}${resps(e)}</div>`}
+    ${playBtn(e.id,e.status==='ready'?e.audio:null,title||'Reply',e.status==='failed'||!!e.legacy&&!e.audio)}</div>${briefOpen.has(e.id)?briefHTML(e):''}${subCards(e,title)}${resps(e)}</div>`}
 // A reply's extra recordings exist only for a named reason (a decision, a warning, a next step): each
 // gets its own small titled card under the reply, played only if wanted. Unlabelled ones never show.
 const SUB_KINDS={Decision:'dec',Warning:'warn',Next:'next'};
@@ -4515,6 +4617,7 @@ $('#ssend').addEventListener('click',async()=>{const e=target,text=stext.value.t
 document.addEventListener('click',ev=>{
   const dismissed=!$('#pastpanel').hidden&&!ev.target.closest('#pastwrap');if(dismissed)setPast(false);
   const dm=ev.target.closest('.dot[data-mark]');if(dm){cycleMark(dm);return}
+  const bc=ev.target.closest('[data-bcheck]');if(bc){checkBrief(bc);return}
   const nc=ev.target.closest('#newchat');if(nc){if(docked())undock();openSheet({id:'new-chat',newChat:true,title:'New chat'},nc);return}
   const pk=ev.target.closest('[data-pick]');if(pk){togglePick(pk.dataset.pick,+pk.dataset.q,+pk.dataset.o);return}
   const sp=ev.target.closest('[data-sendpicks]');if(sp){sendPicks(sp.dataset.sendpicks,sp);return}
@@ -4535,6 +4638,7 @@ document.addEventListener('click',ev=>{
     queue=e.questions.map((q,i)=>({key:e.id+'#'+i,file:q.audio,label:(q.header||'Question')+': '+(q.summary||'')})).filter(x=>x.file);
     const f=queue.shift();if(f){cur=null;play(f.key,f.file,f.label)}return}
   if(ev.target.closest('#pp')&&cur){if(audio.paused){setWant(null);audio.play()}else audio.pause();return}
+  const bo=ev.target.closest('[data-brief]');if(bo){if(!dismissed&&!ev.target.closest('button,a')&&!String(getSelection()))toggleBrief(bo.dataset.brief);return}
   const o=ev.target.closest('[data-open]');if(!o||dismissed||ev.target.closest('button,.qfold>summary')||String(getSelection()))return;  // a disabled play button, or a drag to select text, isn't a tap on the card
   ev.preventDefault();const ch=data.chats.find(x=>x.id===o.dataset.open);if(!ch)return;
   view=ch.id;want=ch.short;const p=chatPath(ch);if(location.pathname!==p)history.pushState(null,'',p);setTimeout(render)});
