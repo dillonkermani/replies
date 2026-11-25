@@ -1041,7 +1041,7 @@ class CaptionWordTiming(unittest.TestCase):
 
     def test_resuming_after_a_pause_starts_the_clock_where_it_stopped(self):
         page = server.PAGE
-        code = page[page.index("let ccBeat=-1,ccClk="):page.index("function ccRender(")]
+        code = page[page.index("let ccBeat="):page.index("function ccRender(")]
         js = ("const audio={currentTime:2.05,paused:true,playbackRate:1};" + code +
               "ccNow();const t0=Date.now();while(Date.now()-t0<120){}"
               "audio.paused=false;const first=ccNow();while(Date.now()-t0<240){}const later=ccNow();"
