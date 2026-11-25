@@ -2758,15 +2758,23 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 /* Focus captions: the playing clip's words, a few at a time, in a calm serif over a soft wash.
    A tap anywhere on them closes them rather than reaching the page behind the wash; the options
    pill keeps its own taps and the header above stays usable. --cchead is the header's height
-   (set by the script). The caption's first line sits at --ccy: about mid-screen, low enough to leave
-   room for a visual under the header, and high enough that five lines clear the options pill. */
-.cc{position:fixed;inset:0;z-index:9;--cchead:0px;
-  --ccfs:min(calc(clamp(30px,6.4vw,58px) * var(--ccz,1)),11vw);--ccpr:calc(var(--ccfs) * 1.6);
+   (set by the script). Sizes come from the captions' own box (cq units), not the window.
+   --ccroom is the height between the header and the options pill. The type is capped by it, so a
+   short screen gets smaller type rather than lines cut off under the header. At the middle size
+   the room holds --ccfit em; a larger size can grow the type only up to --ccmax, where the previous
+   phrase and three lines still fit, so no size step pushes a line under the header or the pill.
+   The caption's first line sits at --ccy: about mid-screen, low enough to leave room for a visual
+   under the header, high enough that five lines clear the pill, and never under the header. */
+.cc{position:fixed;inset:0;z-index:9;--cchead:0px;container:cc/size;
   --ccd:460ms;--cce:cubic-bezier(.25,.8,.25,1);
   -webkit-tap-highlight-color:transparent;
-  --ccy:min(calc(100% - 92px - 6.1 * var(--ccfs)),max(52%,calc(var(--cchead) + 180px)));
   background:radial-gradient(ellipse 70% 45% at 50% 52%,color-mix(in srgb,var(--bg) 92%,transparent) 0%,color-mix(in srgb,var(--bg) 70%,transparent) 55%,transparent 100%)}
 .cc[hidden]{display:none}
+.cc>*{--ccroom:max(96px,calc(100cqh - var(--cchead) - 100px));
+  --ccfs:min(calc(min(clamp(30px,6.4cqw,58px),calc(var(--ccroom) / var(--ccfit,6))) * var(--ccz,1)),11cqw,var(--ccmax,calc(var(--ccroom) / 5.2)));
+  --ccpr:calc(var(--ccfs) * 1.6);
+  --ccy:max(calc(var(--cchead) + 10px + var(--ccpr)),min(calc(100cqh - 92px - 6.1 * var(--ccfs)),max(52cqh,calc(var(--cchead) + 180px))))}
+.cc.noprev>*{--ccpr:0px}
 /* Caption lines. The phrase being spoken (cur) sits at a fixed height (--ccy) and longer phrases grow
    downward, so a visual appearing or a size step never moves the line being read. The phrase before
    it (prev) is that same line, shrunk to .55 and faded, just above; one moving on (gone) drifts up
@@ -2774,7 +2782,7 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
    so every line glides from wherever it is, even mid-glide, and is never redrawn or swapped. The
    prev line fits the band visuals leave above the caption (--ccpr) up to two lines. */
 .ccls{position:absolute;inset:0}
-.ccl{position:absolute;top:var(--ccy);left:0;right:0;margin:0 auto;width:min(16ch,90vw);isolation:isolate;
+.ccl{position:absolute;top:var(--ccy);left:0;right:0;margin:0 auto;width:min(16ch,90cqw);isolation:isolate;
   text-align:center;color:var(--ink);font-family:ui-serif,"New York","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   font-size:var(--ccfs);font-weight:400;line-height:1.22;letter-spacing:.005em;text-wrap:balance;overflow-wrap:anywhere;
   transform-origin:50% 0;will-change:transform,opacity;
@@ -2796,7 +2804,6 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .ccpill.jump{transition:opacity .2s ease}
 /* Caption options: a small pill at the foot of the captions with the size steps and the
    previous-phrase switch. With the switch off, visuals drop back down into the band it used. */
-.cc.noprev{--ccpr:0px}
 .ccsize .ccsep{flex:none;width:1px;margin:7px 3px;background:var(--line)}
 .ccsize .cctog{padding:0 14px;color:var(--muted)}
 .ccsize .cctog[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
@@ -2809,9 +2816,29 @@ body.playing .player{border-color:color-mix(in srgb,var(--accent) 35%,var(--line
 .cc.paused .ccl.cur:not(.out){opacity:.5}.cc.paused .ccvs{opacity:.85}
 .cc.withv{background:radial-gradient(ellipse 90% 62% at 50% 50%,color-mix(in srgb,var(--bg) 97%,transparent) 0%,color-mix(in srgb,var(--bg) 92%,transparent) 58%,transparent 100%)}
 /* Visuals stand above the caption, bottom-aligned to it, and grow upward. */
-.ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100% - var(--ccy) + 22px + var(--ccpr));width:min(620px,92vw);
+.ccvs{position:absolute;left:0;right:0;margin:0 auto;bottom:calc(100cqh - var(--ccy) + 22px + var(--ccpr));width:min(620px,92cqw);
   max-height:calc(var(--ccy) - var(--cchead) - 34px - var(--ccpr));overflow:hidden;display:flex;align-items:flex-end;justify-content:center}
 .ccvs>.ccv{transform-origin:50% 100%}
+/* A short screen (under 760px of captions) showing a clip with visuals keeps them readable rather
+   than shrinking them to a sliver. When it is also wide, the visual takes the left half at full size
+   and the caption the right half, centred in the room; the type also fits that half's width.
+   The header also folds to its player row while captions are up, so they get its other rows.
+   Otherwise the caption drops to just above the pill and the type gives the visual most of the room.
+   The layout is chosen per clip (hasv), so the line being read never moves when a visual appears.
+   A clip with visuals stacked above the caption keeps a share of the room for them at any size. */
+@media (max-height:760px){html.ccup header>:not(.bar){display:none}}
+.cc.hasv>*{--ccfit:9;--ccmax:calc(var(--ccroom) / 8);
+  --ccy:max(calc(var(--cchead) + 10px + var(--ccpr)),min(calc(100cqh - 92px - 3.9 * var(--ccfs)),max(52cqh,calc(var(--cchead) + 180px))))}
+@container cc (max-height:760px){
+  .cc.hasv>*{--ccy:max(calc(var(--cchead) + 10px + var(--ccpr)),calc(100cqh - 92px - 3.9 * var(--ccfs)))}
+}
+@container cc (max-height:760px) and (min-aspect-ratio:1/1){
+  .cc.hasv>*{--ccfit:6;--ccmax:min(calc(var(--ccroom) / 5.2),5.2cqw);
+    --ccy:max(calc(var(--cchead) + 10px + var(--ccpr)),min(calc(100cqh - 92px - 3.7 * var(--ccfs)),calc(var(--cchead) + 10px + var(--ccroom) * .5 - .6 * var(--ccfs))))}
+  .cc.hasv .ccl{left:50cqw;right:2cqw;width:min(16ch,46cqw)}
+  .cc.hasv .ccvs{top:calc(var(--cchead) + 16px);bottom:92px;left:3cqw;right:auto;width:45cqw;max-height:none;margin:0;align-items:center}
+  .cc.hasv .ccvs>.ccv{transform-origin:50% 50%}
+}
 .ccv{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;width:100%}
 .ccv>*{animation:ccpop .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * .14s)}
 @keyframes ccpop{from{opacity:0;transform:scale(.96)}}
@@ -4023,7 +4050,7 @@ seek.addEventListener('change',()=>{if(dur())audio.currentTime=seek.value/1000*d
 // its phrase. Everything follows seeking and playback speed through currentTime.
 const ccScripts=new Map();let ccOn=false,ccChunks=null,ccFile='',ccIdx=-1,ccWi=-2,ccRaf=0;
 try{ccOn=localStorage.getItem('replies-cc')==='1'}catch(_){}
-const CC_END=/[.!?…,;:—–]["”’)]*$/,CC_LEAD=.2,CC_SIZES=[.6,.7,.8,.9,1,1.15,1.3,1.5,1.75];
+const CC_END=/[.!?…,;:—–]["”’)]*$/,CC_LEAD=.2,CC_SIZES=[.4,.5,.6,.7,.8,.9,1,1.15,1.3,1.5,1.75];
 function ccSplit(text){const words=text.split(/\s+/).filter(Boolean),out=[];let cur=[],len=0,first=0;
   words.forEach((w,i)=>{if(!cur.length)first=i;cur.push(w);len+=w.length+1;
     const stop=/[.!?…]["”’)]*$/.test(w),pause=!stop&&CC_END.test(w);
@@ -4079,7 +4106,7 @@ function ccVisual(b){const box=ccEl('div','ccv k-'+b.kind),d=b.data||{};let i=0;
   else if(b.kind==='list')ccArr(d.items,4).forEach(x=>add(ccEl('div','li',x)));
   else{if(d.value)add(ccEl('div','val',d.value));add(ccEl('div','txt',d.text||''))}
   return box}
-let ccBeat=-1,ccClk={ct:-1,pt:0,run:false};
+let ccBeat=-1,ccHasV=false,ccUp=false,ccClk={ct:-1,pt:0,run:false};
 // currentTime moves in steps on some browsers; between steps the clock runs on from the last one
 // (from the first playing frame, so a resume after a pause doesn't jump ahead)
 function ccNow(){const ct=audio.currentTime,p=performance.now();
@@ -4123,6 +4150,7 @@ function ccFit(){const vs=$('#cc .ccvs'),v=vs.firstElementChild;if(!v)return;v.s
   const k=Math.min(1,vs.clientHeight/(v.offsetHeight||1),vs.clientWidth/(v.offsetWidth||1));if(k<1)v.style.transform=`scale(${k})`}
 function ccLayout(){const h=document.querySelector('header');$('#cc').style.setProperty('--cchead',(h?Math.round(h.getBoundingClientRect().height):0)+'px');ccFit();if(ccWi>=0)ccMark()}
 function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile===cur.file&&!audio.ended);box.hidden=!on;
+  if(document.documentElement.classList.toggle('ccup',on)!==ccUp){ccUp=on;if(on)ccLayout()}
   cancelAnimationFrame(ccRaf);ccRaf=0;if(!on)return;
   // until the clip's length is known, a chunk or beat timed by its share waits, unless it opens the clip
   // CC_LEAD is real seconds: the word lights a beat before it is heard, so its quick fade and the marker's
@@ -4133,6 +4161,7 @@ function ccShow(){const box=$('#cc'),on=!!(ccOn&&cur&&cur.file&&ccChunks&&ccFile
   bs.forEach((b,k)=>{if(bt(b)<=now&&(bi<0||bt(b)>=bt(bs[bi])))bi=k});  // the latest beat to have started
   if(ccChunks.pending)ccRefresh();
   box.classList.toggle('withv',bi>=0);
+  if(box.classList.toggle('hasv',bs.length>0)!==ccHasV){ccHasV=bs.length>0;ccFit()}  // the clip's layout (see the .hasv styles)
   if(bi!==ccBeat){ccBeat=bi;const vs=box.querySelector('.ccvs');vs.replaceChildren(...(bi>=0?[ccVisual(ccChunks.beats[bi])]:[]));ccFit()}
   if(i!==ccIdx){ccIdx=i;ccWi=-2;ccRender(ch[i],ccPrev(ch,i))}
   // the word being spoken: the last one whose start has passed (its own time, or its share of the phrase)
@@ -4148,9 +4177,11 @@ function ccSet(on){ccOn=on;try{localStorage.setItem('replies-cc',on?'1':'0')}cat
   const b=$('#ccb');b.setAttribute('aria-pressed',String(on));b.classList.toggle('fast',on);ccFile='';ccIdx=-1;ccBeat=-1;ccSync()}
 $('#ccb').addEventListener('click',()=>ccSet(!ccOn));
 ['play','playing','pause','seeked','ended','emptied'].forEach(n=>audio.addEventListener(n,ccSync));
-// caption size: A− and A+ at the foot of the captions step through a few sizes, kept per browser
-let ccZ=CC_SIZES.indexOf(1);try{const v=localStorage.getItem('replies-cc-size');if(v!==null&&CC_SIZES[+v])ccZ=+v}catch(_){}
-function ccSize(step){ccZ=Math.max(0,Math.min(CC_SIZES.length-1,ccZ+step));try{localStorage.setItem('replies-cc-size',String(ccZ))}catch(_){}
+// caption size: A− and A+ at the foot of the captions step through a few sizes, kept per browser as
+// the scale itself; a size saved by an older page is a step number counted from .6
+let ccZ=CC_SIZES.indexOf(1);try{const s=localStorage.getItem('replies-cc-scale'),v=localStorage.getItem('replies-cc-size');
+  if(s!==null&&CC_SIZES.includes(+s))ccZ=CC_SIZES.indexOf(+s);else if(v!==null&&CC_SIZES[+v+2])ccZ=+v+2}catch(_){}
+function ccSize(step){ccZ=Math.max(0,Math.min(CC_SIZES.length-1,ccZ+step));try{localStorage.setItem('replies-cc-scale',String(CC_SIZES[ccZ]));localStorage.removeItem('replies-cc-size')}catch(_){}
   $('#cc').style.setProperty('--ccz',CC_SIZES[ccZ]);$('#ccm').disabled=ccZ===0;$('#ccp').disabled=ccZ===CC_SIZES.length-1;ccFit();if(ccWi>=0)ccMark()}
 $('#ccm').addEventListener('click',()=>ccSize(-1));$('#ccp').addEventListener('click',()=>ccSize(1));
 // previous phrase: on by default, kept per browser; switching it fades that line in or out in place
