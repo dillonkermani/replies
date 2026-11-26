@@ -1504,7 +1504,7 @@ class ReplyBrief(unittest.TestCase):
     """Tapping a reply's row opens a written brief (summary and open to-dos) instead of the chat."""
     RID = "20990101-000000-abcdef"
     BRIEF = {"tldr": "Sync control shipped in 0.2.29.", "blocks": [
-        {"kind": "todo", "title": "Your move", "items": ["Reload the page", "Tune Sync by ear"]},
+        {"kind": "todo", "title": "Your move", "items": ["Reload the page", "Tune Sync by ear — the delay can't be measured"]},
         {"kind": "facts", "title": "Numbers", "items": ["Lead at 1x: 0.19 s"]},
         {"kind": "chart", "title": "x", "items": ["dropped: unknown kind"]},
         {"kind": "points", "title": "Empty", "items": []}]}
@@ -1577,6 +1577,7 @@ class ReplyBrief(unittest.TestCase):
         self.assertIn('data-k="0.1" checked', html)
         self.assertIn('data-k="0.0">', html)
         self.assertIn("1/2", html)
+        self.assertIn('<b>Tune Sync by ear</b><span class="bw"> — the delay can&#39;t be measured</span>', html)
         self.assertIn("<b>Lead at 1x:</b> 0.19 s", html)
         self.assertIn('data-open="c1"', html)  # the chat is still one tap away
         self.assertIn('data-brief="r1"', reply_attr)

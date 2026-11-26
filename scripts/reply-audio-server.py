@@ -3528,12 +3528,12 @@ html[data-theme="violet"][data-scheme="dark"] .card{box-shadow:var(--shadow),ins
 .brief .bb{margin-top:10px}.brief .bb:first-child{margin-top:0}
 .brief .bh{font-size:11.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
 .brief .bn{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:var(--accent-soft);color:var(--accent);letter-spacing:0}
-.brief ul,.brief ol{margin:0;padding-left:20px}.brief li{margin:3px 0}
+.brief ul,.brief ol{margin:0;padding-left:20px}.brief li{margin:6px 0}
 .brief ul.todo{list-style:none;padding:0}
 .brief .bi{display:flex;gap:10px;align-items:flex-start;padding:5px 0;cursor:pointer}
 .brief .bi input{margin:2px 0 0;width:18px;height:18px;accent-color:var(--accent);flex:none;cursor:pointer}
 .brief li.done span{color:var(--muted);text-decoration:line-through}
-.brief .facts li b{font-weight:600}
+.brief li b{font-weight:600}.brief .bw{color:var(--muted)}
 .brief code{font-size:12.5px;background:var(--panel-2);padding:1px 4px;border-radius:4px}
 .brief .bnone{color:var(--muted)}
 .brief .bfoot{display:flex;justify-content:flex-end;margin-top:8px;font-size:13px}
@@ -3890,10 +3890,13 @@ const openAttr=e=>!view&&data.chats.some(c=>c.id===e.chat)?` data-open="${esc(e.
 const briefOpen=new Set(),briefs=new Map();
 const briefAttr=e=>e.kind==='reply'&&!e.legacy?` data-brief="${esc(e.id)}" aria-expanded="${briefOpen.has(e.id)}"`:openAttr(e);
 const bText=t=>esc(t).replace(/`([^`]+)`/g,'<code>$1</code>');
+// "<fact> — <why>" items: the fact is bold and the reason follows in a quieter colour, so a glance
+// down the list reads the facts and the eye drops to a reason only when it wants one.
+const bWhy=t=>{const i=t.indexOf(' — ');return i>0&&i<=90?`<b>${bText(t.slice(0,i))}</b><span class="bw"> — ${bText(t.slice(i+3))}</span>`:bText(t)};
 function briefBlock(id,k,bi,done){const n=k.items.length,got=k.items.filter((_,i)=>done.has(bi+'.'+i)).length;
   const items=k.items.map((t,i)=>{const key=bi+'.'+i;
-    if(k.kind==='todo'){const on=done.has(key);return `<li class="${on?'done':''}"><label class="bi"><input type="checkbox" data-bcheck="${esc(id)}" data-k="${key}"${on?' checked':''}><span>${bText(t)}</span></label></li>`}
-    const m=k.kind==='facts'&&/^([^:]{1,40}):\s+(.+)$/.exec(t);return m?`<li><b>${bText(m[1])}:</b> ${bText(m[2])}</li>`:`<li>${bText(t)}</li>`}).join('');
+    if(k.kind==='todo'){const on=done.has(key);return `<li class="${on?'done':''}"><label class="bi"><input type="checkbox" data-bcheck="${esc(id)}" data-k="${key}"${on?' checked':''}><span>${bWhy(t)}</span></label></li>`}
+    const m=k.kind==='facts'&&/^([^:]{1,40}):\s+(.+)$/.exec(t);return m?`<li><b>${bText(m[1])}:</b> ${bText(m[2])}</li>`:`<li>${bWhy(t)}</li>`}).join('');
   const tag=k.kind==='steps'?'ol':'ul';
   return `<div class="bb ${k.kind}">${k.title?`<div class="bh">${esc(k.title)}${k.kind==='todo'?`<span class="bn">${got}/${n}</span>`:''}</div>`:''}<${tag} class="${k.kind}">${items}</${tag}></div>`}
 function briefHTML(e){const b=briefs.get(e.id),ch=!view&&data.chats.find(c=>c.id===e.chat);let body;
