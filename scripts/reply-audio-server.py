@@ -4451,8 +4451,13 @@ document.addEventListener('click',ev=>{if(!$('#mpanel').hidden&&!ev.target.close
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&!$('#mpanel').hidden){musicPanel(false);$('#mus').focus()}});
 // Space plays or pauses the current clip, unless it's typing or a control reached by keyboard (Tab)
 // that space should press. A button last clicked with the mouse gives space to the clip.
-document.addEventListener('keydown',ev=>{if(ev.key!==' '||ev.ctrlKey||ev.metaKey||ev.altKey||ev.isComposing||!cur)return;
+// Space plays or pauses the current clip; Left and Right jump it back or forward 5 seconds (held, they keep going).
+const SEEK_STEP=5;
+document.addEventListener('keydown',ev=>{const k=ev.key,arrow=k==='ArrowLeft'||k==='ArrowRight';
+  if(k!==' '&&!arrow||ev.ctrlKey||ev.metaKey||ev.altKey||ev.isComposing||!cur)return;
   const t=ev.target;if(t.closest&&t.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;
+  if(arrow){const d=dur();if(!d)return;ev.preventDefault();
+    audio.currentTime=Math.max(0,Math.min(d-.05,audio.currentTime+(k==='ArrowLeft'?-SEEK_STEP:SEEK_STEP)));return}
   if(t!==document.body&&t.matches&&t.matches(':focus-visible'))return;
   ev.preventDefault();if(ev.repeat)return;if(audio.paused){setWant(null);audio.play()}else audio.pause()});
 audio.addEventListener('play',()=>music.duck('voice',true));
